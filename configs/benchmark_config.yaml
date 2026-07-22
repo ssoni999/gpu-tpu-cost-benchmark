@@ -1,0 +1,61 @@
+# Frozen benchmark contract — identical on GPU and TPU.
+# Recipe repos supply infra/serving patterns; this file is the source of truth
+# for workload shape and vllm bench serve parameters.
+
+model: "Qwen/Qwen3-4B"
+workload_type: inference
+
+benchmark:
+  num_prompts: 100
+  input_tokens: 1024
+  output_tokens: 128
+  seed: 100
+  temperature: 0
+  warmup_requests: 10
+  measured_runs: 3
+  request_rate: inf          # vllm: --request-rate inf
+  dataset_name: random
+  ignore_eos: true
+
+slo:
+  latency_ttft_p95_ms: 2000
+  minimum_success_rate: 1.0
+
+gpu:
+  platform: gpu
+  accelerator: G4
+  accelerator_count: 1
+  machine_type: g4-standard-48
+  framework: vllm
+  docker_image: vllm/vllm-openai:latest
+  recipe_ref: ../gpu-recipes/inference/g4/single-host-serving/vllm/README.md
+  serving:
+    max_model_len: 1200      # input + output + small buffer
+    max_num_batched_tokens: 1024
+    max_num_seqs: 128
+    tensor_parallel_size: 1
+    gpu_memory_utilization: 0.95
+
+tpu:
+  platform: tpu
+  generation: v5e
+  accelerator: v5litepod-1
+  accelerator_count: 1
+  runtime_version: v2-alpha-tpuv5-lite
+  framework: vllm
+  docker_image: vllm/vllm-tpu:latest
+  # Official tpu-recipes Qwen3 guide targets v6e; this project pins v5e (see README).
+  recipe_ref: ../tpu-recipes/inference/trillium/vLLM/Qwen3/README.md
+  serving:
+    max_model_len: 1200
+    max_num_batched_tokens: 1024
+    max_num_seqs: 128
+    tensor_parallel_size: 1
+    gpu_memory_utilization: 0.98
+
+pricing:
+  # Set at run time in configs/gpu.env or configs/tpu.env (not committed).
+  gpu_accelerator_hourly_usd: null
+  gpu_vm_hourly_usd: 0.0
+  tpu_accelerator_hourly_usd: null
+  tpu_vm_hourly_usd: 0.0

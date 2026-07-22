@@ -1,0 +1,20 @@
+# Local secrets
+configs/gpu.env
+configs/tpu.env
+
+# Raw benchmark artifacts (large; copy summaries into repo if needed)
+results/gpu/*.txt
+results/gpu/*.json
+results/tpu/*.txt
+results/tpu/*.json
+!results/gpu/.gitkeep
+!results/tpu/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS
+.DS_Store
