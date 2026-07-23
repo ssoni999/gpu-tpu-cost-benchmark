@@ -65,6 +65,25 @@ def parse_vllm_bench_output(text: str) -> dict[str, Any]:
     return out
 
 
+def parse_replay_json(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert replay.py summary JSON into normalize-ready metrics."""
+    return {
+        "successful_requests": data.get("successful_requests", 0),
+        "failed_requests": data.get("failed_requests", 0),
+        "benchmark_duration_seconds": data.get("benchmark_duration_seconds")
+        or data.get("wall_time_s"),
+        "total_input_tokens": data.get("total_input_tokens", 0),
+        "total_generated_tokens": data.get("total_generated_tokens", 0),
+        "requests_per_second": data.get("requests_per_second", 0.0),
+        "output_tokens_per_second": data.get("output_tokens_per_second")
+        or data.get("generation_tok_s"),
+        "p50_ttft_ms": data.get("p50_ttft_ms") or data.get("median_ttft_ms"),
+        "p95_ttft_ms": data.get("p95_ttft_ms") or data.get("ttft_ms", {}).get("p95"),
+        "p99_ttft_ms": data.get("p99_ttft_ms") or data.get("ttft_ms", {}).get("p99"),
+        "source": "trace_replay",
+    }
+
+
 def build_normalized(
     platform: str,
     raw_metrics: dict[str, Any],
@@ -105,14 +124,16 @@ def build_normalized(
         "p99_ttft_ms": raw_metrics.get("p99_ttft_ms"),
         "hourly_cost_usd": hourly,
         "environment": environment,
+        "measurement_source": raw_metrics.get("source", "vllm_bench"),
         "raw_metrics": raw_metrics,
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Normalize vllm bench serve output.")
+    parser = argparse.ArgumentParser(description="Normalize bench or replay output.")
     parser.add_argument("--platform", required=True, choices=["gpu", "tpu"])
-    parser.add_argument("--raw", required=True, help="Path to raw bench .txt output")
+    parser.add_argument("--raw", help="Path to vllm bench serve .txt output")
+    parser.add_argument("--replay-json", help="Path to replay.py summary JSON")
     parser.add_argument("--environment", required=True, help="Path to environment.json")
     parser.add_argument(
         "--output",
@@ -122,12 +143,20 @@ def main() -> None:
     args = parser.parse_args()
 
     config = load_config(args.config) if args.config else load_config()
-    text = Path(args.raw).read_text(encoding="utf-8")
     environment = json.loads(Path(args.environment).read_text(encoding="utf-8"))
-    raw_metrics = parse_vllm_bench_output(text)
+
+    if args.replay_json:
+        replay_data = json.loads(Path(args.replay_json).read_text(encoding="utf-8"))
+        raw_metrics = parse_replay_json(replay_data)
+    elif args.raw:
+        text = Path(args.raw).read_text(encoding="utf-8")
+        raw_metrics = parse_vllm_bench_output(text)
+        raw_metrics["source"] = "vllm_bench"
+    else:
+        raise SystemExit("Provide --raw (bench text) or --replay-json (trace replay output)")
 
     if not raw_metrics.get("successful_requests"):
-        raise SystemExit(f"No benchmark metrics parsed from {args.raw}")
+        raise SystemExit("No successful requests found in input metrics")
 
     normalized = build_normalized(args.platform, raw_metrics, environment, config)
     out_path = Path(args.output or f"results/normalized/{args.platform}.json")

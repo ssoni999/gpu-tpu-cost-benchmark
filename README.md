@@ -46,7 +46,23 @@ Official `tpu-recipes` Qwen3 guide targets **v6e**. This project pins **v5e**:
 
 See [vLLM TPU setup](https://docs.vllm.ai/projects/tpu/en/latest/getting_started/tpu_setup/) for v5e provisioning.
 
-## Quick start
+## Quick start (Option A — trace + replay)
+
+Full steps: [docs/OPTION_A_WORKFLOW.md](docs/OPTION_A_WORKFLOW.md)
+
+```bash
+pip install -r requirements.txt
+make trace                                    # new workload (save the printed seed)
+# deploy vLLM on GKE, port-forward :8000
+make replay TARGET=http://127.0.0.1:8000 PLATFORM=tpu
+make normalize-replay PLATFORM=tpu
+# same trace on GPU
+make replay TARGET=http://127.0.0.1:8001 PLATFORM=gpu
+make normalize-replay PLATFORM=gpu
+make compare
+```
+
+## Quick start (legacy vllm bench)
 
 ### 1. Local setup (Cursor / Mac)
 
@@ -100,5 +116,5 @@ cat comparison.json
 
 - Verify **G4** and **TPU v5e** quota before provisioning.
 - Set real hourly rates in `gpu.env` / `tpu.env` before quoting dollars.
-- v1 uses `vllm bench serve` random dataset with fixed seed — not customer trace replay.
-- Run `measured_runs: 3` manually until automation is added.
+- v1 uses trace replay (Option A) or `vllm bench serve` — not customer-exported traffic yet.
+- `make trace` without `SEED=` generates a **new** workload each time; reuse one trace for GPU+TPU in the same comparison.

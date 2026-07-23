@@ -1,0 +1,10 @@
+{
+  "seed": 999,
+  "generated_at": "2026-07-23T19:22:36Z",
+  "model": "Qwen/Qwen3-4B",
+  "num_requests": 100,
+  "input_tokens": 1024,
+  "output_tokens": 128,
+  "span_seconds": 200.0,
+  "output_path": "workload/prompts.jsonl"
+}

@@ -1,6 +1,9 @@
 # Local secrets
 configs/gpu.env
 configs/tpu.env
+.env
+
+workload/prompts.jsonl
 
 # Raw benchmark artifacts (large; copy summaries into repo if needed)
 results/gpu/*.txt
