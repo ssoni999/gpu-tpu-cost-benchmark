@@ -1,10 +1,24 @@
 {
-  "seed": 999,
-  "generated_at": "2026-07-23T19:22:36Z",
+  "seed": 42,
+  "generated_at": "2026-07-23T19:28:12Z",
   "model": "Qwen/Qwen3-4B",
   "num_requests": 100,
   "input_tokens": 1024,
   "output_tokens": 128,
   "span_seconds": 200.0,
+  "unique_prompts": 100,
+  "categories": [
+    "code_review",
+    "comparison",
+    "customer_email",
+    "docs_howto",
+    "finance_forecast",
+    "incident_triage",
+    "meeting_notes",
+    "policy_qa",
+    "roadmap",
+    "security_review",
+    "sql_analyst"
+  ],
   "output_path": "workload/prompts.jsonl"
 }
