@@ -48,10 +48,11 @@ See [vLLM TPU setup](https://docs.vllm.ai/projects/tpu/en/latest/getting_started
 
 ## Quick start (Option A — trace + replay)
 
-Full steps: [docs/OPTION_A_WORKFLOW.md](docs/OPTION_A_WORKFLOW.md)
+Full steps: [docs/OPTION_A_WORKFLOW.md](docs/OPTION_A_WORKFLOW.md) · Results UI: [docs/UI.md](docs/UI.md)
 
 ```bash
 pip install -r requirements.txt
+make ui                                       # port 8787 — reads run_01_replay.json
 make trace                                    # new workload (save the printed seed)
 # deploy vLLM on GKE, port-forward :8000
 make replay TARGET=http://127.0.0.1:8000 PLATFORM=tpu

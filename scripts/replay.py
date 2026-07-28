@@ -776,8 +776,6 @@ def main() -> int:
         live_json = Path(f"results/{args.platform}/live.json")
 
     dashboard_url = args.dashboard_url
-    if dashboard_url is None and args.platform in ("tpu", "gpu"):
-        dashboard_url = "http://127.0.0.1:8765"
 
     live = None
     if dashboard_url or live_json:
@@ -791,6 +789,7 @@ def main() -> int:
         print(f" Live dashboard: {dashboard_url}/")
     if live_json:
         print(f" Live JSON: {live_json}")
+        print(f" Results UI: run 'make ui' then open http://127.0.0.1:8787/")
     print("=" * 60)
 
     outcome = asyncio.run(

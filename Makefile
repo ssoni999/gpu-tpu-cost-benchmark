@@ -1,4 +1,4 @@
-.PHONY: help install trace replay replay-live dashboard normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace replay replay-live dashboard ui normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
@@ -6,6 +6,7 @@ TRACE ?= workload/prompts.jsonl
 MODEL ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['model'])")
 WARMUP ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['benchmark']['warmup_requests'])")
 DASHBOARD_PORT ?= 8765
+UI_PORT ?= 8787
 
 help:
 	@echo "GPU vs TPU cost benchmark — Option A: trace + replay"
@@ -14,8 +15,8 @@ help:
 	@echo "  make trace                New JSONL workload (random seed unless SEED= set)"
 	@echo "  make trace SEED=100       Reproducible workload"
 	@echo "  make replay TARGET=... PLATFORM=tpu   Replay trace against vLLM"
-	@echo "  make dashboard                        Live UI on port $(DASHBOARD_PORT) (run in separate terminal)"
-	@echo "  make replay-live TARGET=... PLATFORM=tpu  Replay + push metrics to dashboard"
+	@echo "  make ui                                 Results UI on port $(UI_PORT) (reads run_01_replay.json)"
+	@echo "  make dashboard                        Legacy live dashboard on $(DASHBOARD_PORT)"
 	@echo "  make normalize-replay PLATFORM=tpu    Normalize replay JSON"
 	@echo "  make compare              GPU vs TPU comparison.json"
 	@echo ""
@@ -42,7 +43,10 @@ replay:
 		$(if $(CONCURRENCY),--concurrency $(CONCURRENCY),) \
 		$(if $(PARAMS_B),--params-b $(PARAMS_B),) \
 		$(if $(PEAK_TFLOPS),--peak-tflops $(PEAK_TFLOPS),) \
-		$(if $(NO_DASHBOARD),,--dashboard-url http://127.0.0.1:$(DASHBOARD_PORT))
+		$(if $(DASHBOARD_URL),--dashboard-url $(DASHBOARD_URL),)
+
+ui:
+	PYTHONPATH=scripts python3 scripts/results_server.py --port $(UI_PORT)
 
 dashboard:
 	PYTHONPATH=scripts python3 scripts/dashboard_server.py --port $(DASHBOARD_PORT)

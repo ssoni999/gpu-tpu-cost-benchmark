@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GPU vs TPU Benchmark Results</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --border: #dfe3ea;
+      --text: #1a1d24;
+      --muted: #5c6578;
+      --tpu: #1a73e8;
+      --gpu: #34a853;
+      --accent: #174ea6;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 1.5rem;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.75rem;
+    }
+    h1 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+    .sub { color: var(--muted); font-size: 0.85rem; margin-top: 0.15rem; }
+    .controls { display: flex; gap: 0.5rem; align-items: center; }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 0.45rem 0.85rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    button.secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+    .pill {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      background: #e8f0fe;
+      color: var(--tpu);
+    }
+    .pill.running { background: #fef7e0; color: #b06000; }
+    .pill.missing { background: #fce8e6; color: #c5221f; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1.5rem 2.5rem; }
+    .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    @media (max-width: 800px) { .panels { grid-template-columns: 1fr; } }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .panel-head {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-head h2 { margin: 0; font-size: 0.95rem; }
+    .panel-head.tpu h2 { color: var(--tpu); }
+    .panel-head.gpu h2 { color: var(--gpu); }
+    .hero {
+      padding: 1rem;
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+    }
+    .hero .big { font-size: 2rem; font-weight: 700; }
+    .hero .label { color: var(--muted); font-size: 0.8rem; margin-top: 0.25rem; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+    .metric {
+      padding: 0.65rem 1rem;
+      border-bottom: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+    }
+    .metric:nth-child(2n) { border-right: none; }
+    .metric .k { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .metric .v { font-size: 1.05rem; font-weight: 600; margin-top: 0.15rem; }
+    section.block { margin-top: 1.25rem; }
+    section.block h3 {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin: 0 0 0.5rem;
+    }
+    .empty {
+      padding: 2rem 1rem;
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .empty code { font-size: 0.82rem; }
+    footer {
+      margin-top: 1.5rem;
+      font-size: 0.78rem;
+      color: var(--muted);
+    }
+    .compare-bar {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+      display: none;
+    }
+    .compare-bar.visible { display: block; }
+    .compare-row { display: flex; justify-content: space-between; padding: 0.35rem 0; font-size: 0.9rem; }
+    .compare-row .winner { font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>GPU vs TPU Benchmark Results</h1>
+      <div class="sub">Live data from <code>make replay</code> → <code>results/{platform}/run_01_replay.json</code></div>
+    </div>
+    <div class="controls">
+      <span id="updated" class="pill">loading…</span>
+      <button type="button" id="refresh">Refresh</button>
+      <button type="button" class="secondary" id="auto">Auto: ON</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="compare-bar" class="compare-bar">
+      <h3 style="margin:0 0 0.5rem;font-size:0.85rem">TPU vs GPU (same trace)</h3>
+      <div id="compare-rows"></div>
+    </div>
+    <div class="panels" id="panels"></div>
+    <footer>
+      Server port <strong>8787</strong> (separate from sim POC on 8765).
+      Run <code>make ui</code>, then <code>make replay TARGET=... PLATFORM=tpu</code>.
+      Refreshes every 3s while Auto is on.
+    </footer>
+  </main>
+
+  <script>
+    const panelsEl = document.getElementById('panels');
+    const updatedEl = document.getElementById('updated');
+    const compareBar = document.getElementById('compare-bar');
+    const compareRows = document.getElementById('compare-rows');
+    let autoOn = true;
+    let timer = null;
+
+    function fmt(n, d = 1) {
+      if (n === undefined || n === null || Number.isNaN(Number(n))) return '—';
+      return Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d > 0 ? 0 : d });
+    }
+
+    function metric(k, v) {
+      return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    }
+
+    function renderPanel(platform, data) {
+      const r = data.replay;
+      const headClass = platform;
+      const label = platform.toUpperCase();
+
+      if (!data.has_replay) {
+        const status = data.is_running ? 'running' : 'missing';
+        const msg = data.is_running
+          ? 'Replay in progress… (reading live.json)'
+          : `No results yet. Run:<br><code>make replay TARGET=http://127.0.0.1:8000 PLATFORM=${platform} MODEL='…'</code>`;
+        return `
+          <div class="panel">
+            <div class="panel-head ${headClass}"><h2>${label}</h2><span class="pill ${status}">${status}</span></div>
+            <div class="empty">${msg}</div>
+          </div>`;
+      }
+
+      const hw = r.hardware_utilization || {};
+      const srv = r.server_metrics || {};
+      const ttft = r.ttft_ms || {};
+      const lat = r.latency_ms || {};
+      const itl = r.itl_ms || {};
+      const status = data.is_running ? 'running' : 'complete';
+
+      return `
+        <div class="panel">
+          <div class="panel-head ${headClass}">
+            <h2>${label}</h2>
+            <span class="pill ${status}">${status}</span>
+          </div>
+          <div class="hero">
+            <div class="big">${fmt(r.output_tokens_per_second, 1)}</div>
+            <div class="label">output tokens / sec</div>
+          </div>
+          <div class="grid">
+            ${metric('Model', r.model || '—')}
+            ${metric('Infrastructure', r.infrastructure || '—')}
+            ${metric('Wall time', fmt(r.wall_time_s, 2) + ' s')}
+            ${metric('Requests', `${r.successful_requests ?? '—'} ok / ${r.failed_requests ?? 0} err`)}
+            ${metric('Throughput (RPS)', fmt(r.requests_per_second, 2))}
+            ${metric('Generated tokens', fmt(r.total_generated_tokens, 0))}
+            ${metric('Input tokens', fmt(r.total_input_tokens, 0))}
+            ${metric('Total throughput', fmt(r.throughput_tok_s, 1) + ' tok/s')}
+            ${metric('TTFT p50', fmt(ttft.p50, 1) + ' ms')}
+            ${metric('TTFT p95', fmt(ttft.p95, 1) + ' ms')}
+            ${metric('TTFT p99', fmt(ttft.p99, 1) + ' ms')}
+            ${metric('Latency p95', fmt(lat.p95, 1) + ' ms')}
+            ${metric('Avg duration', fmt(lat.avg, 1) + ' ms')}
+            ${metric('Avg ITL', fmt(itl.avg, 2) + ' ms')}
+            ${metric('ITL p95', fmt(itl.p95, 2) + ' ms')}
+            ${metric('MFU', fmt(hw.mfu_percent, 2) + '%')}
+            ${metric('Achieved TFLOPS', fmt(hw.achieved_tflops, 4))}
+            ${metric('Peak TFLOPS', fmt(hw.peak_tflops, 0))}
+            ${metric('KV cache peak', fmt(srv.peak_kv_cache_usage_pct, 2) + '%')}
+            ${metric('Prefix hit rate', fmt(srv.prefix_cache_hit_rate_pct, 1) + '%')}
+            ${metric('Prefix hits', fmt(srv.prefix_cache_hits, 0))}
+            ${metric('Peak queued', fmt(srv.peak_queued_requests, 1))}
+            ${metric('Peak running', fmt(srv.peak_running_requests, 1))}
+          </div>
+        </div>`;
+    }
+
+    function renderCompare(tpu, gpu) {
+      if (!tpu?.has_replay || !gpu?.has_replay) {
+        compareBar.classList.remove('visible');
+        return;
+      }
+      const a = tpu.replay;
+      const b = gpu.replay;
+      const rows = [
+        ['Output tok/s', a.output_tokens_per_second, b.output_tokens_per_second, true],
+        ['TTFT p95 (ms)', a.ttft_ms?.p95, b.ttft_ms?.p95, false],
+        ['Latency p95 (ms)', a.latency_ms?.p95, b.latency_ms?.p95, false],
+        ['MFU %', a.hardware_utilization?.mfu_percent, b.hardware_utilization?.mfu_percent, true],
+        ['Wall time (s)', a.wall_time_s, b.wall_time_s, false],
+      ];
+      compareRows.innerHTML = rows.map(([label, va, vb, higherBetter]) => {
+        const na = Number(va), nb = Number(vb);
+        let win = '—';
+        if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) {
+          const tpuWins = higherBetter ? na > nb : na < nb;
+          win = tpuWins ? 'TPU' : 'GPU';
+        }
+        return `<div class="compare-row"><span>${label}</span><span>TPU ${fmt(va)} · GPU ${fmt(vb)} <span class="winner">${win !== '—' ? '→ ' + win : ''}</span></span></div>`;
+      }).join('');
+      compareBar.classList.add('visible');
+    }
+
+    async function load() {
+      try {
+        const [tpuRes, gpuRes] = await Promise.all([
+          fetch('/api/results/tpu').then(r => r.json()),
+          fetch('/api/results/gpu').then(r => r.json()),
+        ]);
+        panelsEl.innerHTML = renderPanel('tpu', tpuRes) + renderPanel('gpu', gpuRes);
+        renderCompare(tpuRes, gpuRes);
+        updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+        updatedEl.className = 'pill';
+      } catch (e) {
+        updatedEl.textContent = 'fetch error';
+        updatedEl.className = 'pill missing';
+      }
+    }
+
+    document.getElementById('refresh').onclick = load;
+    document.getElementById('auto').onclick = () => {
+      autoOn = !autoOn;
+      document.getElementById('auto').textContent = 'Auto: ' + (autoOn ? 'ON' : 'OFF');
+      if (autoOn) startAuto(); else clearInterval(timer);
+    };
+
+    function startAuto() {
+      clearInterval(timer);
+      timer = setInterval(load, 3000);
+    }
+
+    load();
+    startAuto();
+  </script>
+</body>
+</html>
