@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>GPU vs TPU Benchmark — Live</title>
+  <style>
+    :root {
+      --bg: #0f1117;
+      --panel: #1a1d27;
+      --border: #2a2f3d;
+      --text: #e6e8ef;
+      --muted: #8b93a7;
+      --accent: #5b9cf5;
+      --ok: #3dd68c;
+      --err: #f07178;
+      --warn: #ebc88d;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    header {
+      padding: 1.25rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    h1 { margin: 0; font-size: 1.15rem; font-weight: 600; }
+    .badge {
+      font-size: 0.75rem;
+      padding: 0.2rem 0.55rem;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+    }
+    .badge.running { color: var(--accent); border-color: #3d5f8a; }
+    .badge.complete { color: var(--ok); border-color: #2f6b4f; }
+    .badge.error { color: var(--err); border-color: #7a3a3a; }
+    main { padding: 1.25rem 1.5rem 2rem; max-width: 1200px; margin: 0 auto; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 0.75rem;
+      margin-bottom: 1.25rem;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+    .card .label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .card .value { font-size: 1.35rem; font-weight: 600; margin-top: 0.25rem; }
+    .card .sub { font-size: 0.78rem; color: var(--muted); margin-top: 0.15rem; }
+    section h2 {
+      font-size: 0.85rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin: 1.5rem 0 0.65rem;
+    }
+    .bar-wrap {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.85rem 1rem;
+    }
+    .bar-bg {
+      height: 10px;
+      background: #12151c;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.25s ease;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.45rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 500; }
+    .ok { color: var(--ok); }
+    .fail { color: var(--err); }
+    footer {
+      margin-top: 1.5rem;
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Benchmark Live Dashboard</h1>
+      <div id="subtitle" class="badge">connecting…</div>
+    </div>
+    <div id="meta" class="badge">—</div>
+  </header>
+  <main>
+    <div class="bar-wrap">
+      <div>Progress <span id="prog-text" style="color:var(--muted)">0 / 0</span></div>
+      <div class="bar-bg"><div class="bar-fill" id="prog-bar"></div></div>
+    </div>
+
+    <div class="grid" id="metric-grid"></div>
+
+    <section>
+      <h2>Recent requests</h2>
+      <div class="card" style="padding:0; overflow:hidden">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th><th>Status</th><th>TTFT</th><th>Latency</th><th>Out tok</th><th>ITL</th>
+            </tr>
+          </thead>
+          <tbody id="recent-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <h2>Server metrics (vLLM /metrics)</h2>
+      <div class="grid" id="server-grid"></div>
+    </section>
+
+    <footer>
+      Stream: <code>/api/stream</code> · Snapshot: <code>/api/state</code> ·
+      Open via Cloud Shell port 8765 or SSH tunnel to localhost:8765
+    </footer>
+  </main>
+  <script>
+    const els = {
+      subtitle: document.getElementById('subtitle'),
+      meta: document.getElementById('meta'),
+      progText: document.getElementById('prog-text'),
+      progBar: document.getElementById('prog-bar'),
+      metricGrid: document.getElementById('metric-grid'),
+      serverGrid: document.getElementById('server-grid'),
+      recentBody: document.getElementById('recent-body'),
+    };
+
+    function card(label, value, sub='') {
+      return `<div class="card"><div class="label">${label}</div><div class="value">${value}</div>${sub ? `<div class="sub">${sub}</div>` : ''}</div>`;
+    }
+
+    function fmt(n, d=1) {
+      if (n === undefined || n === null || Number.isNaN(n)) return '—';
+      return Number(n).toFixed(d);
+    }
+
+    function render(state) {
+      const st = state.status || 'idle';
+      els.subtitle.textContent = st;
+      els.subtitle.className = 'badge ' + st;
+      els.meta.textContent = [
+        state.platform || state.infrastructure || '—',
+        state.model || '—',
+      ].join(' · ');
+
+      const p = state.progress || {};
+      const total = p.total || 0;
+      const done = p.completed || 0;
+      const pct = total ? Math.min(100, (done / total) * 100) : 0;
+      els.progText.textContent = `${done} / ${total} (${p.ok || 0} ok, ${p.err || 0} err)`;
+      els.progBar.style.width = pct + '%';
+
+      const r = state.rolling || {};
+      const hw = (state.summary && state.summary.hardware_utilization) || {};
+      const srv = state.server_metrics || (state.summary && state.summary.server_metrics) || {};
+
+      els.metricGrid.innerHTML = [
+        card('Throughput (TPS)', fmt(r.output_tps || (state.summary && state.summary.output_tokens_per_second), 1), 'output tok/s'),
+        card('Throughput (RPS)', fmt(r.rps || (state.summary && state.summary.requests_per_second), 2), 'req/s'),
+        card('TTFT p95', fmt(r.ttft_p95_ms, 1) + ' ms'),
+        card('Latency p95', fmt(r.latency_p95_ms, 1) + ' ms'),
+        card('Avg ITL', fmt(r.avg_itl_ms, 2) + ' ms'),
+        card('MFU', fmt(hw.mfu_percent || r.mfu_percent, 2) + '%', 'achieved / peak TFLOPS'),
+        card('Wall time', fmt(state.summary && state.summary.wall_time_s, 2) + ' s'),
+        card('Generated tok', (state.summary && state.summary.total_generated_tokens) || r.output_tokens || '—'),
+      ].join('');
+
+      els.serverGrid.innerHTML = [
+        card('KV cache peak', fmt(srv.peak_kv_cache_usage_pct || srv.kv_usage_pct, 2) + '%'),
+        card('Prefix hit rate', fmt(srv.prefix_hit_rate_pct || srv.prefix_cache_hit_rate_pct, 1) + '%'),
+        card('Queued (peak)', fmt(srv.peak_queued_requests || srv.queued_requests, 1)),
+        card('Running (peak)', fmt(srv.peak_running_requests || srv.running_requests, 1)),
+      ].join('');
+
+      const rows = (state.recent_requests || []).slice().reverse();
+      els.recentBody.innerHTML = rows.map(req => {
+        const ok = req.status === 'ok';
+        return `<tr>
+          <td>${req.index != null ? req.index + 1 : '—'}</td>
+          <td class="${ok ? 'ok' : 'fail'}">${ok ? 'ok' : 'err'}</td>
+          <td>${fmt(req.ttft_ms, 1)} ms</td>
+          <td>${fmt(req.latency_ms, 1)} ms</td>
+          <td>${req.completion_tokens ?? '—'}</td>
+          <td>${fmt(req.avg_itl_ms, 2)} ms</td>
+        </tr>`;
+      }).join('') || '<tr><td colspan="6" style="color:var(--muted)">Waiting for requests…</td></tr>';
+    }
+
+    async function loadSnapshot() {
+      const res = await fetch('/api/state');
+      render(await res.json());
+    }
+
+    loadSnapshot();
+    const es = new EventSource('/api/stream');
+    es.onmessage = (ev) => {
+      try { render(JSON.parse(ev.data)); } catch (e) {}
+    };
+    es.onerror = () => {
+      els.subtitle.textContent = 'reconnecting…';
+      setInterval(loadSnapshot, 3000);
+    };
+  </script>
+</body>
+</html>

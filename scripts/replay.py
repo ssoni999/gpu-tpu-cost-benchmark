@@ -20,6 +20,7 @@ import numpy as np
 import openai
 
 from config import load_config
+from dashboard_client import LiveDashboard
 
 # ---------------------------------------------------------------------------
 # Hardware / infrastructure
@@ -381,6 +382,47 @@ class ReplayOutcome:
     final_metrics: dict[str, Any] = field(default_factory=dict)
 
 
+def compute_rolling(
+    results: list[RequestResult],
+    elapsed_s: float,
+    peak_tflops: float,
+    params_b: float,
+) -> dict[str, Any]:
+    ok = [r for r in results if r.status == "ok" and r.index >= 0]
+    ttfts = [r.ttft_ms for r in ok]
+    lats = [r.latency_ms for r in ok]
+    itls = [r.avg_itl_ms for r in ok if r.avg_itl_ms > 0]
+    out_tok = sum(r.completion_tokens for r in ok)
+    gen_tps = out_tok / elapsed_s if elapsed_s > 0 else 0.0
+    rps = len(ok) / elapsed_s if elapsed_s > 0 else 0.0
+    achieved_tflops = (gen_tps * 2.0 * params_b * 1e9) / 1e12 if gen_tps > 0 else 0.0
+    mfu = (achieved_tflops / peak_tflops * 100.0) if peak_tflops > 0 else 0.0
+    return {
+        "output_tokens": out_tok,
+        "output_tps": round(gen_tps, 2),
+        "rps": round(rps, 3),
+        "ttft_p95_ms": round(percentile(ttfts, 95), 1),
+        "latency_p95_ms": round(percentile(lats, 95), 1),
+        "avg_itl_ms": round(statistics.mean(itls), 2) if itls else 0.0,
+        "achieved_tflops": round(achieved_tflops, 4),
+        "mfu_percent": round(mfu, 2),
+    }
+
+
+async def emit_server_samples(
+    live: LiveDashboard,
+    session: aiohttp.ClientSession,
+    metrics_log: list[dict[str, Any]],
+    stop_event: asyncio.Event,
+    interval: float = 1.0,
+) -> None:
+    while not stop_event.is_set():
+        if metrics_log:
+            sample = metrics_log[-1]
+            await live.publish(session, "server_sample", sample)
+        await asyncio.sleep(interval)
+
+
 async def replay_trace(
     target: str,
     model: str,
@@ -392,6 +434,10 @@ async def replay_trace(
     infra_type: str,
     scrape_metrics: bool,
     metrics_interval: float,
+    live: Optional[LiveDashboard] = None,
+    peak_tflops: float = 100.0,
+    params_b: float = 1.0,
+    platform: str = "auto",
 ) -> ReplayOutcome:
     base_url = target.rstrip("/")
     if not base_url.endswith("/v1"):
@@ -405,10 +451,28 @@ async def replay_trace(
 
     async with aiohttp.ClientSession() as http_session:
         monitor_task: Optional[asyncio.Task[None]] = None
+        server_emit_task: Optional[asyncio.Task[None]] = None
         if scrape_metrics:
             monitor_task = asyncio.create_task(
                 monitor_metrics(http_session, target, metrics_log, stop_event, metrics_interval)
             )
+
+        if live is not None:
+            await live.publish(
+                http_session,
+                "run_start",
+                {
+                    "model": model,
+                    "infrastructure": infra_type,
+                    "platform": platform,
+                    "target": target,
+                    "progress": {"completed": 0, "total": len(trace), "ok": 0, "err": 0},
+                },
+            )
+            if scrape_metrics:
+                server_emit_task = asyncio.create_task(
+                    emit_server_samples(live, http_session, metrics_log, stop_event)
+                )
 
         if warmup_count > 0:
             await warmup(client, model, warmup_count, api_mode)
@@ -417,6 +481,7 @@ async def replay_trace(
         results: list[RequestResult] = []
         replay_start = time.perf_counter()
         total = len(trace)
+        results_lock = asyncio.Lock()
 
         async def run_one(index: int, record: TraceRecord) -> None:
             target_time = replay_start + (record.offset / speed)
@@ -424,25 +489,45 @@ async def replay_trace(
             if delay > 0:
                 await asyncio.sleep(delay)
             async with semaphore:
-                results.append(
-                    await send_request(
-                        client,
-                        model,
-                        record,
-                        index,
-                        api_mode,
-                        total_requests=total,
-                        infra_type=infra_type,
-                    )
+                result = await send_request(
+                    client,
+                    model,
+                    record,
+                    index,
+                    api_mode,
+                    total_requests=total,
+                    infra_type=infra_type,
                 )
+                async with results_lock:
+                    results.append(result)
+                    if live is not None:
+                        ok_n = sum(1 for r in results if r.status == "ok")
+                        err_n = sum(1 for r in results if r.status != "ok")
+                        elapsed = time.perf_counter() - replay_start
+                        await live.publish(
+                            http_session,
+                            "request_done",
+                            {
+                                "completed": len(results),
+                                "total": total,
+                                "ok": ok_n,
+                                "err": err_n,
+                                "request": asdict(result),
+                                "rolling": compute_rolling(
+                                    results, elapsed, peak_tflops, params_b
+                                ),
+                            },
+                        )
 
         await asyncio.gather(*(run_one(i, record) for i, record in enumerate(trace)))
         wall_time = time.perf_counter() - replay_start
 
+        stop_event.set()
+        if server_emit_task is not None:
+            await server_emit_task
         if monitor_task is not None:
-            stop_event.set()
             await monitor_task
-            final_metrics = await scrape_cumulative_metrics(http_session, target)
+        final_metrics = await scrape_cumulative_metrics(http_session, target)
 
     results.sort(key=lambda r: r.index)
     return ReplayOutcome(
@@ -654,6 +739,16 @@ def main() -> int:
         default=0.2,
         help="Seconds between /metrics polls",
     )
+    parser.add_argument(
+        "--dashboard-url",
+        default=None,
+        help="Live dashboard base URL, e.g. http://127.0.0.1:8765",
+    )
+    parser.add_argument(
+        "--live-json",
+        default=None,
+        help="Write live snapshot JSON during replay (default: results/<platform>/live.json)",
+    )
     args = parser.parse_args()
 
     trace_path = Path(args.trace)
@@ -676,10 +771,21 @@ def main() -> int:
         peak_tflops = args.peak_tflops
     params_b = args.params_b if args.params_b is not None else guess_params_b(args.model)
 
+    live_json = Path(args.live_json) if args.live_json else None
+    if live_json is None and args.platform in ("tpu", "gpu"):
+        live_json = Path(f"results/{args.platform}/live.json")
+    live = None
+    if args.dashboard_url or live_json:
+        live = LiveDashboard(dashboard_url=args.dashboard_url, live_json_path=live_json)
+
     print("=" * 60)
     print(f" Replaying {len(trace)} requests → {args.target}")
     print(f" Speed: {args.speed}x | Concurrency: {args.concurrency} | API: {api_mode}")
     print(f" Infrastructure: {infra_type} (peak {peak_tflops} TFLOPS) | Model: {params_b}B params")
+    if args.dashboard_url:
+        print(f" Live dashboard: {args.dashboard_url}/")
+    if live_json:
+        print(f" Live JSON: {live_json}")
     print("=" * 60)
 
     outcome = asyncio.run(
@@ -694,6 +800,10 @@ def main() -> int:
             infra_type,
             scrape_metrics=not args.no_metrics,
             metrics_interval=args.metrics_interval,
+            live=live,
+            peak_tflops=peak_tflops,
+            params_b=params_b,
+            platform=args.platform,
         )
     )
     summary = summarize(
@@ -709,6 +819,13 @@ def main() -> int:
         outcome.final_metrics,
     )
     print_summary(summary)
+
+    if live is not None:
+        async def _finish_live() -> None:
+            async with aiohttp.ClientSession() as session:
+                await live.publish(session, "run_complete", summary)
+
+        asyncio.run(_finish_live())
 
     out = Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)

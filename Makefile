@@ -1,10 +1,11 @@
-.PHONY: help install trace replay normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace replay replay-live dashboard normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
 TRACE ?= workload/prompts.jsonl
 MODEL ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['model'])")
 WARMUP ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['benchmark']['warmup_requests'])")
+DASHBOARD_PORT ?= 8765
 
 help:
 	@echo "GPU vs TPU cost benchmark — Option A: trace + replay"
@@ -13,10 +14,12 @@ help:
 	@echo "  make trace                New JSONL workload (random seed unless SEED= set)"
 	@echo "  make trace SEED=100       Reproducible workload"
 	@echo "  make replay TARGET=... PLATFORM=tpu   Replay trace against vLLM"
+	@echo "  make dashboard                        Live UI on port $(DASHBOARD_PORT) (run in separate terminal)"
+	@echo "  make replay-live TARGET=... PLATFORM=tpu  Replay + push metrics to dashboard"
 	@echo "  make normalize-replay PLATFORM=tpu    Normalize replay JSON"
 	@echo "  make compare              GPU vs TPU comparison.json"
 	@echo ""
-	@echo "See docs/OPTION_A_WORKFLOW.md for the full GKE step list."
+	@echo "See docs/OPTION_A_WORKFLOW.md and docs/DASHBOARD.md"
 
 install:
 	pip install -r requirements.txt
@@ -38,7 +41,20 @@ replay:
 		$(if $(SPEED),--speed $(SPEED),) \
 		$(if $(CONCURRENCY),--concurrency $(CONCURRENCY),) \
 		$(if $(PARAMS_B),--params-b $(PARAMS_B),) \
-		$(if $(PEAK_TFLOPS),--peak-tflops $(PEAK_TFLOPS),)
+		$(if $(PEAK_TFLOPS),--peak-tflops $(PEAK_TFLOPS),) \
+		$(if $(DASHBOARD_URL),--dashboard-url $(DASHBOARD_URL),)
+
+dashboard:
+	PYTHONPATH=scripts python3 scripts/dashboard_server.py --port $(DASHBOARD_PORT)
+
+replay-live:
+	@test -n "$(TARGET)" || (echo "TARGET is required" && exit 1)
+	@test -n "$(PLATFORM)" || (echo "PLATFORM is required: gpu or tpu" && exit 1)
+	$(MAKE) replay TARGET=$(TARGET) PLATFORM=$(PLATFORM) MODEL='$(MODEL)' \
+		DASHBOARD_URL=http://127.0.0.1:$(DASHBOARD_PORT) \
+		$(if $(SPEED),SPEED=$(SPEED),) \
+		$(if $(CONCURRENCY),CONCURRENCY=$(CONCURRENCY),) \
+		$(if $(PARAMS_B),PARAMS_B=$(PARAMS_B),)
 
 normalize-replay:
 	@test -n "$(PLATFORM)" || (echo "PLATFORM is required: gpu or tpu" && exit 1)
