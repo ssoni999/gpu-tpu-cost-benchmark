@@ -40,6 +40,7 @@ class LiveDashboard:
         if event == "run_start":
             self.state.update(payload)
             self.state["status"] = "running"
+            self.state["summary"] = None
         elif event == "request_done":
             self._merge_request(payload)
         elif event == "server_sample":
@@ -79,13 +80,25 @@ class LiveDashboard:
         session: aiohttp.ClientSession,
         body: dict[str, Any],
     ) -> None:
-        url = f"{self.dashboard_url}/api/event"
+        if not self.dashboard_url:
+            return
+        event = body.get("event", "")
         try:
             async with session.post(
-                url,
+                f"{self.dashboard_url}/api/event",
                 json=body,
                 timeout=aiohttp.ClientTimeout(total=2),
             ) as resp:
                 await resp.read()
+            if event == "run_complete" and "payload" in body:
+                platform = body.get("state", {}).get("platform", "tpu")
+                if platform in ("auto", None):
+                    platform = "tpu"
+                async with session.post(
+                    f"{self.dashboard_url}/api/replay?platform={platform}",
+                    json=body["payload"],
+                    timeout=aiohttp.ClientTimeout(total=5),
+                ) as resp:
+                    await resp.read()
         except Exception:
-            pass  # dashboard is optional; never fail replay
+            pass

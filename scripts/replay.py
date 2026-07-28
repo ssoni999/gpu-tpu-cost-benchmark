@@ -774,16 +774,21 @@ def main() -> int:
     live_json = Path(args.live_json) if args.live_json else None
     if live_json is None and args.platform in ("tpu", "gpu"):
         live_json = Path(f"results/{args.platform}/live.json")
+
+    dashboard_url = args.dashboard_url
+    if dashboard_url is None and args.platform in ("tpu", "gpu"):
+        dashboard_url = "http://127.0.0.1:8765"
+
     live = None
-    if args.dashboard_url or live_json:
-        live = LiveDashboard(dashboard_url=args.dashboard_url, live_json_path=live_json)
+    if dashboard_url or live_json:
+        live = LiveDashboard(dashboard_url=dashboard_url, live_json_path=live_json)
 
     print("=" * 60)
     print(f" Replaying {len(trace)} requests → {args.target}")
     print(f" Speed: {args.speed}x | Concurrency: {args.concurrency} | API: {api_mode}")
     print(f" Infrastructure: {infra_type} (peak {peak_tflops} TFLOPS) | Model: {params_b}B params")
-    if args.dashboard_url:
-        print(f" Live dashboard: {args.dashboard_url}/")
+    if dashboard_url:
+        print(f" Live dashboard: {dashboard_url}/")
     if live_json:
         print(f" Live JSON: {live_json}")
     print("=" * 60)
@@ -818,6 +823,7 @@ def main() -> int:
         outcome.metrics_log,
         outcome.final_metrics,
     )
+    summary["platform"] = args.platform if args.platform in ("tpu", "gpu") else platform
     print_summary(summary)
 
     if live is not None:

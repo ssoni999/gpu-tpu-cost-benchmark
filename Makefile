@@ -42,7 +42,7 @@ replay:
 		$(if $(CONCURRENCY),--concurrency $(CONCURRENCY),) \
 		$(if $(PARAMS_B),--params-b $(PARAMS_B),) \
 		$(if $(PEAK_TFLOPS),--peak-tflops $(PEAK_TFLOPS),) \
-		$(if $(DASHBOARD_URL),--dashboard-url $(DASHBOARD_URL),)
+		$(if $(NO_DASHBOARD),,--dashboard-url http://127.0.0.1:$(DASHBOARD_PORT))
 
 dashboard:
 	PYTHONPATH=scripts python3 scripts/dashboard_server.py --port $(DASHBOARD_PORT)
