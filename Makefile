@@ -30,12 +30,15 @@ replay:
 	@test -n "$(PLATFORM)" || (echo "PLATFORM is required: gpu or tpu" && exit 1)
 	PYTHONPATH=scripts python3 scripts/replay.py \
 		--target $(TARGET) \
-		--model $(MODEL) \
+		--model '$(MODEL)' \
+		--platform $(PLATFORM) \
 		--trace $(TRACE) \
 		--output results/$(PLATFORM)/run_01_replay.json \
 		--warmup $(WARMUP) \
 		$(if $(SPEED),--speed $(SPEED),) \
-		$(if $(CONCURRENCY),--concurrency $(CONCURRENCY),)
+		$(if $(CONCURRENCY),--concurrency $(CONCURRENCY),) \
+		$(if $(PARAMS_B),--params-b $(PARAMS_B),) \
+		$(if $(PEAK_TFLOPS),--peak-tflops $(PEAK_TFLOPS),)
 
 normalize-replay:
 	@test -n "$(PLATFORM)" || (echo "PLATFORM is required: gpu or tpu" && exit 1)
