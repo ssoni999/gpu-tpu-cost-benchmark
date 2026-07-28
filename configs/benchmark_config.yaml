@@ -2,7 +2,7 @@
 # Recipe repos supply infra/serving patterns; this file is the source of truth
 # for workload shape and vllm bench serve parameters.
 
-model: "Qwen/Qwen3-4B"
+model: "Qwen/Qwen2.5-0.5B-Instruct"
 workload_type: inference
 
 benchmark:
