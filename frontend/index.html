@@ -125,6 +125,18 @@
     .compare-bar.visible { display: block; }
     .compare-row { display: flex; justify-content: space-between; padding: 0.35rem 0; font-size: 0.9rem; }
     .compare-row .winner { font-weight: 600; }
+    .error-banner {
+      background: #fce8e6;
+      border: 1px solid #f5c6c2;
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.75rem;
+      font-size: 0.85rem;
+    }
+    .error-banner strong { color: #c5221f; }
+    .error-banner code { font-size: 0.8rem; }
+    .error-list { margin: 0.5rem 0 0; padding-left: 1.2rem; }
+    .pill.failed { background: #fce8e6; color: #c5221f; }
   </style>
 </head>
 <body>
@@ -192,7 +204,21 @@
       const ttft = r.ttft_ms || {};
       const lat = r.latency_ms || {};
       const itl = r.itl_ms || {};
-      const status = data.is_running ? 'running' : 'complete';
+      const failed = (r.failed_requests || 0) > 0 && (r.successful_requests || 0) === 0;
+      const status = data.is_running ? 'running' : (failed ? 'failed' : 'complete');
+      const errBlock = (() => {
+        const es = r.error_summary;
+        if (!es?.top_errors?.length) {
+          if (failed) {
+            return `<div class="error-banner"><strong>All requests failed.</strong> Re-run replay and check the terminal for error details, or inspect <code>results/${platform}/run_01_replay.json</code>.</div>`;
+          }
+          return '';
+        }
+        const items = es.top_errors.slice(0, 3).map(e =>
+          `<li><code>${String(e.error).slice(0, 200)}</code> (${e.count}x)</li>`
+        ).join('');
+        return `<div class="error-banner"><strong>All ${es.total_failures} requests failed</strong> — metrics are zero until replay succeeds.<ul class="error-list">${items}</ul></div>`;
+      })();
 
       return `
         <div class="panel">
@@ -200,6 +226,7 @@
             <h2>${label}</h2>
             <span class="pill ${status}">${status}</span>
           </div>
+          ${errBlock}
           <div class="hero">
             <div class="big">${fmt(r.output_tokens_per_second, 1)}</div>
             <div class="label">output tokens / sec</div>

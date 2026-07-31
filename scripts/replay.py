@@ -11,6 +11,7 @@ import statistics
 import sys
 import time
 import urllib.request
+from collections import Counter
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Optional
@@ -477,6 +478,25 @@ async def replay_trace(
         if warmup_count > 0:
             await warmup(client, model, warmup_count, api_mode)
 
+        if trace:
+            probe = await send_request(
+                client,
+                model,
+                trace[0],
+                index=-2,
+                api_mode=api_mode,
+                log_progress=False,
+            )
+            if probe.status != "ok":
+                hint = (
+                    "\nPreflight request failed before replaying the trace. "
+                    "Fix this first — all requests would fail the same way.\n"
+                    "  • Context too long → set --max-model-len=4096 in tiny-model.yaml and redeploy\n"
+                    "  • Wrong model name → MODEL must match the server's --model flag\n"
+                    "  • Bad port-forward → kubectl port-forward svc/tiny-model-service 8000:8000\n"
+                )
+                raise RuntimeError(f"{probe.error}{hint}")
+
         semaphore = asyncio.Semaphore(concurrency)
         results: list[RequestResult] = []
         replay_start = time.perf_counter()
@@ -536,6 +556,19 @@ async def replay_trace(
         metrics_log=metrics_log,
         final_metrics=final_metrics,
     )
+
+
+def build_error_summary(errors: list[RequestResult]) -> dict[str, Any]:
+    msgs = [r.error for r in errors if r.error]
+    counts = Counter(msgs)
+    return {
+        "total_failures": len(errors),
+        "unique_errors": len(counts),
+        "top_errors": [
+            {"error": msg, "count": count} for msg, count in counts.most_common(5)
+        ],
+        "samples": [asdict(r) for r in errors[:3]],
+    }
 
 
 def summarize_server_metrics(
@@ -602,8 +635,7 @@ def summarize(
     mfu_percent = (achieved_tflops / peak_tflops * 100.0) if peak_tflops > 0 else 0.0
 
     server = summarize_server_metrics(metrics_log, final_metrics)
-
-    return {
+    payload: dict[str, Any] = {
         "source": "trace_replay",
         "target": target,
         "model": model,
@@ -645,8 +677,10 @@ def summarize(
             "mfu_percent": round(mfu_percent, 2),
         },
         "server_metrics": server,
-        "results": [asdict(r) for r in results],
     }
+    if errors:
+        payload["error_summary"] = build_error_summary(errors)
+    return payload
 
 
 def print_summary(summary: dict) -> None:
@@ -693,6 +727,17 @@ def print_summary(summary: dict) -> None:
     )
     print(f"   Peak queued requests   : {srv.get('peak_queued_requests', 0):.1f}")
     print(f"   Peak running requests  : {srv.get('peak_running_requests', 0):.1f}")
+    if summary.get("failed_requests", 0) > 0:
+        print("-" * 60)
+        print(" ERRORS (replay failed — metrics above are zero):")
+        err = summary.get("error_summary") or {}
+        for item in err.get("top_errors", [])[:3]:
+            print(f"   [{item.get('count', '?')}x] {item.get('error', 'unknown')}")
+        print()
+        print(" Common fixes:")
+        print("   • context length → bump --max-model-len in tiny-model.yaml (try 4096) and redeploy")
+        print("   • wrong model    → pass MODEL='Qwen/Qwen2.5-0.5B-Instruct' matching the server")
+        print("   • no port-forward→ kubectl port-forward svc/tiny-model-service 8000:8000")
     print("=" * 60)
 
 
@@ -792,24 +837,28 @@ def main() -> int:
         print(f" Results UI: run 'make ui' then open http://127.0.0.1:8787/")
     print("=" * 60)
 
-    outcome = asyncio.run(
-        replay_trace(
-            args.target,
-            args.model,
-            trace,
-            args.speed,
-            args.concurrency,
-            args.warmup,
-            api_mode,
-            infra_type,
-            scrape_metrics=not args.no_metrics,
-            metrics_interval=args.metrics_interval,
-            live=live,
-            peak_tflops=peak_tflops,
-            params_b=params_b,
-            platform=args.platform,
+    try:
+        outcome = asyncio.run(
+            replay_trace(
+                args.target,
+                args.model,
+                trace,
+                args.speed,
+                args.concurrency,
+                args.warmup,
+                api_mode,
+                infra_type,
+                scrape_metrics=not args.no_metrics,
+                metrics_interval=args.metrics_interval,
+                live=live,
+                peak_tflops=peak_tflops,
+                params_b=params_b,
+                platform=args.platform,
+            )
         )
-    )
+    except RuntimeError as exc:
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        return 2
     summary = summarize(
         outcome.results,
         outcome.wall_time,
