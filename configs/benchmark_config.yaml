@@ -1,6 +1,6 @@
 # Frozen benchmark contract — identical on GPU and TPU.
 # Recipe repos supply infra/serving patterns; this file is the source of truth
-# for workload shape and vllm bench serve parameters.
+# for workload shape, platform serving params, and K8s manifests (make manifests).
 
 model: "Qwen/Qwen2.5-0.5B-Instruct"
 workload_type: inference
@@ -23,18 +23,42 @@ slo:
 
 gpu:
   platform: gpu
-  accelerator: G4
+  accelerator: nvidia-l4
   accelerator_count: 1
   machine_type: g4-standard-48
   framework: vllm
   docker_image: vllm/vllm-openai:latest
   recipe_ref: ../gpu-recipes/inference/g4/single-host-serving/vllm/README.md
+  k8s:
+    deployment_name: tiny-model-gpu-server
+    service_name: tiny-model-gpu-service
+    app_label: tiny-model-gpu-server
+    container_name: vllm-gpu
+    port: 8000
+    output_file: tiny-model-gpu.yaml
+  infra:
+    node_selector:
+      cloud.google.com/gke-accelerator: nvidia-l4
+    tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+    resources:
+      requests:
+        cpu: "2"
+        memory: 8Gi
+        nvidia.com/gpu: 1
+      limits:
+        nvidia.com/gpu: 1
   serving:
-    max_model_len: 1200      # input + output + small buffer
-    max_num_batched_tokens: 1024
+    max_model_len: 4096
+    max_num_batched_tokens: 4096
     max_num_seqs: 128
     tensor_parallel_size: 1
     gpu_memory_utilization: 0.95
+    extra_args:
+      - --served-model-name=Qwen/Qwen2.5-0.5B-Instruct
+      - --host=0.0.0.0
 
 tpu:
   platform: tpu
@@ -46,12 +70,33 @@ tpu:
   docker_image: vllm/vllm-tpu:latest
   # Official tpu-recipes Qwen3 guide targets v6e; this project pins v5e (see README).
   recipe_ref: ../tpu-recipes/inference/trillium/vLLM/Qwen3/README.md
+  k8s:
+    deployment_name: tiny-model-server
+    service_name: tiny-model-service
+    app_label: tiny-model-server
+    container_name: vllm-tpu
+    port: 8000
+    output_file: tiny-model.yaml
+  infra:
+    node_selector:
+      cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
+      cloud.google.com/gke-tpu-topology: 1x1
+    tolerations:
+      - key: cloud.google.com/gke-tpu-accelerator
+        operator: Exists
+        effect: NoSchedule
+    resources:
+      limits:
+        google.com/tpu: 1
+      requests:
+        google.com/tpu: 1
   serving:
-    max_model_len: 1200
-    max_num_batched_tokens: 1024
+    max_model_len: 4096
+    max_num_batched_tokens: 4096
     max_num_seqs: 128
     tensor_parallel_size: 1
     gpu_memory_utilization: 0.98
+    extra_args: []
 
 pricing:
   # Set at run time in configs/gpu.env or configs/tpu.env (not committed).

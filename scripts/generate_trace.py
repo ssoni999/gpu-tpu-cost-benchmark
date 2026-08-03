@@ -14,8 +14,17 @@ from config import load_config
 from prompt_catalog import SHARED_HANDBOOK, build_user_prompt
 
 
+# Word-split budgets underestimate BPE token counts (~1.9x on Qwen-style prompts).
+BPE_TOKENS_PER_WORD = 1.9
+CHAT_TEMPLATE_BUFFER = 32
+
+
 def _approx_tokens(text: str) -> int:
-    return max(1, len(text.split()))
+    return max(1, int(len(text.split()) * BPE_TOKENS_PER_WORD))
+
+
+def _word_budget(token_budget: int) -> int:
+    return max(1, int(token_budget / BPE_TOKENS_PER_WORD))
 
 
 def _trim_to_tokens(text: str, target_tokens: int) -> str:
@@ -98,10 +107,15 @@ def generate_trace(
     span_seconds: float,
     seed: int,
     shared_prefix_tokens: int,
+    max_model_len: int = 4096,
 ) -> list[dict]:
     rng = random.Random(seed)
     system_prompt = _shared_prefix(shared_prefix_tokens)
-    user_budget = max(64, input_tokens - _approx_tokens(system_prompt) - 4)
+    max_prompt_tokens = max_model_len - output_tokens - CHAT_TEMPLATE_BUFFER
+    system_tok = _approx_tokens(system_prompt)
+    fit_budget = _word_budget(max(64, max_prompt_tokens - system_tok - 8))
+    config_budget = max(64, input_tokens - len(system_prompt.split()) - 4)
+    user_budget = min(fit_budget, config_budget)
     offsets = _generate_offsets(rng, num_requests, span_seconds)
     records = []
     seen_prompts: set[str] = set()
@@ -180,6 +194,15 @@ def main() -> None:
     output_tokens = int(bench["output_tokens"])
     span_seconds = float(bench.get("trace_span_seconds", max(120.0, num_requests * 2.0)))
     shared_prefix_tokens = int(bench.get("shared_prefix_tokens", min(256, input_tokens // 4)))
+    max_model_len = int(
+        bench.get(
+            "max_model_len",
+            max(
+                int(cfg.get("tpu", {}).get("serving", {}).get("max_model_len", 4096)),
+                int(cfg.get("gpu", {}).get("serving", {}).get("max_model_len", 4096)),
+            ),
+        )
+    )
 
     seed = args.seed if args.seed is not None else secrets.randbelow(2**31)
     records = generate_trace(
@@ -189,6 +212,7 @@ def main() -> None:
         span_seconds=span_seconds,
         seed=seed,
         shared_prefix_tokens=shared_prefix_tokens,
+        max_model_len=max_model_len,
     )
 
     output = Path(args.output)
@@ -219,7 +243,8 @@ def main() -> None:
     print(f"Unique prompts: {meta['unique_prompts']}/{num_requests}")
     print(f"Categories: {', '.join(sorted(categories))}")
     print(f"Metadata: {meta_path}")
-    print(f"Approx input tokens (first prompt): {_approx_tokens(records[0]['prompt'])}")
+    print(f"Approx prompt tokens (first prompt): {_approx_tokens(records[0]['prompt'])}")
+    print(f"Max model len (trace cap): {max_model_len} (prompt + {output_tokens} output must fit)")
 
 
 if __name__ == "__main__":

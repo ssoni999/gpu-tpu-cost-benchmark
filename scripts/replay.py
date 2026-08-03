@@ -20,7 +20,7 @@ import aiohttp
 import numpy as np
 import openai
 
-from config import load_config
+from config import load_config, platform_metadata
 from dashboard_client import LiveDashboard
 
 # ---------------------------------------------------------------------------
@@ -872,6 +872,17 @@ def main() -> int:
         outcome.final_metrics,
     )
     summary["platform"] = args.platform if args.platform in ("tpu", "gpu") else platform
+    cfg = load_config()
+    if args.platform in ("tpu", "gpu"):
+        summary["platform_config"] = platform_metadata(cfg, args.platform)
+        summary["benchmark_contract"] = {
+            "model": cfg["model"],
+            "trace": str(trace_path),
+            "num_requests": len(trace),
+            "input_tokens": cfg["benchmark"]["input_tokens"],
+            "output_tokens": cfg["benchmark"]["output_tokens"],
+            "seed": cfg["benchmark"].get("seed"),
+        }
     print_summary(summary)
 
     if live is not None:

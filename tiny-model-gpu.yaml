@@ -1,3 +1,5 @@
+# Generated from configs/benchmark_config.yaml — do not edit by hand.
+# Regenerate: make manifests
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,32 +17,35 @@ spec:
       nodeSelector:
         cloud.google.com/gke-accelerator: nvidia-l4
       tolerations:
-        - key: nvidia.com/gpu
-          operator: Exists
-          effect: NoSchedule
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
       containers:
-        - name: vllm-gpu
-          image: vllm/vllm-openai:latest
-          command:
-            - python3
-            - -m
-            - vllm.entrypoints.openai.api_server
-          args:
-            - --model=Qwen/Qwen2.5-0.5B-Instruct
-            - --served-model-name=Qwen/Qwen2.5-0.5B-Instruct
-            - --max-model-len=2048
-            - --tensor-parallel-size=1
-            - --host=0.0.0.0
-            - --port=8000
-          ports:
-            - containerPort: 8000
-          resources:
-            requests:
-              cpu: "2"
-              memory: 8Gi
-              nvidia.com/gpu: 1
-            limits:
-              nvidia.com/gpu: 1
+      - name: vllm-gpu
+        image: vllm/vllm-openai:latest
+        command:
+        - python3
+        - -m
+        - vllm.entrypoints.openai.api_server
+        args:
+        - --model=Qwen/Qwen2.5-0.5B-Instruct
+        - --max-model-len=4096
+        - --max-num-batched-tokens=4096
+        - --max-num-seqs=128
+        - --tensor-parallel-size=1
+        - --gpu-memory-utilization=0.95
+        - --port=8000
+        - --served-model-name=Qwen/Qwen2.5-0.5B-Instruct
+        - --host=0.0.0.0
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            cpu: '2'
+            memory: 8Gi
+            nvidia.com/gpu: 1
+          limits:
+            nvidia.com/gpu: 1
 ---
 apiVersion: v1
 kind: Service
@@ -51,5 +56,5 @@ spec:
   selector:
     app: tiny-model-gpu-server
   ports:
-    - port: 8000
-      targetPort: 8000
+  - port: 8000
+    targetPort: 8000

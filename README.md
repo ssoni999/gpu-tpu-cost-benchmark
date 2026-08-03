@@ -7,7 +7,7 @@ Recipe repos (`gpu-recipes`, `tpu-recipes`) stay **adjacent and read-only** for 
 ## Layout
 
 ```
-configs/benchmark_config.yaml   # Single source of truth (model, prompts, tokens, seed)
+configs/benchmark_config.yaml   # Workload contract + gpu/tpu serving & infra
 configs/gpu.env.example         # Copy → gpu.env (pricing + GCP IDs)
 configs/tpu.env.example         # Copy → tpu.env (v5e + pricing)
 scripts/run_gpu.sh              # Run on G4 GCE VM
@@ -48,10 +48,11 @@ See [vLLM TPU setup](https://docs.vllm.ai/projects/tpu/en/latest/getting_started
 
 ## Quick start (Option A — trace + replay)
 
-Full steps: [docs/OPTION_A_WORKFLOW.md](docs/OPTION_A_WORKFLOW.md) · Results UI: [docs/UI.md](docs/UI.md)
+Full steps: [docs/OPTION_A_WORKFLOW.md](docs/OPTION_A_WORKFLOW.md) · Migration: [docs/MIGRATION.md](docs/MIGRATION.md) · Results UI: [docs/UI.md](docs/UI.md)
 
 ```bash
 pip install -r requirements.txt
+make manifests                                  # render tiny-model*.yaml from config
 make ui                                       # port 8787 — reads run_01_replay.json
 make trace                                    # new workload (save the printed seed)
 # deploy vLLM on GKE, port-forward :8000

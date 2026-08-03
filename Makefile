@@ -1,4 +1,4 @@
-.PHONY: help install trace replay replay-live dashboard ui normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace replay replay-live dashboard ui manifests migration-diff normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
@@ -16,11 +16,19 @@ help:
 	@echo "  make trace SEED=100       Reproducible workload"
 	@echo "  make replay TARGET=... PLATFORM=tpu   Replay trace against vLLM"
 	@echo "  make ui                                 Results UI on port $(UI_PORT) (reads run_01_replay.json)"
+	@echo "  make manifests                          Render tiny-model*.yaml from benchmark_config.yaml"
+	@echo "  make migration-diff                     Print GPU vs TPU parameter diff"
 	@echo "  make dashboard                        Legacy live dashboard on $(DASHBOARD_PORT)"
 	@echo "  make normalize-replay PLATFORM=tpu    Normalize replay JSON"
 	@echo "  make compare              GPU vs TPU comparison.json"
 	@echo ""
-	@echo "See docs/OPTION_A_WORKFLOW.md and docs/DASHBOARD.md"
+	@echo "See docs/OPTION_A_WORKFLOW.md, docs/MIGRATION.md, and docs/UI.md"
+
+manifests:
+	PYTHONPATH=scripts python3 scripts/render_manifest.py
+
+migration-diff:
+	PYTHONPATH=scripts python3 -c "from config import migration_diff, load_config; import json; print(json.dumps(migration_diff(load_config()), indent=2))"
 
 install:
 	pip install -r requirements.txt

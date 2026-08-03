@@ -46,3 +46,14 @@ Open http://localhost:8787
 ## Port 8765
 
 Port 8765 may be used by **gpu-tpu-sim-poc** (mock matmul UI). This results UI uses **8787** only — no conflict.
+
+## Migration parameters
+
+The UI loads GPU vs TPU serving/infra differences from `configs/benchmark_config.yaml` via `/api/migration`.
+
+See [MIGRATION.md](MIGRATION.md) for deploy checklists. After editing config:
+
+```bash
+make manifests
+kubectl apply -f tiny-model.yaml   # or tiny-model-gpu.yaml
+```

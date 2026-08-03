@@ -1,13 +1,14 @@
 {
   "seed": 42,
-  "generated_at": "2026-07-23T19:28:12Z",
-  "model": "Qwen/Qwen3-4B",
+  "generated_at": "2026-07-31T21:54:54Z",
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
   "num_requests": 100,
   "input_tokens": 1024,
   "output_tokens": 128,
   "span_seconds": 200.0,
   "unique_prompts": 100,
   "categories": [
+    "api_design",
     "code_review",
     "comparison",
     "customer_email",
@@ -20,5 +21,5 @@
     "security_review",
     "sql_analyst"
   ],
-  "output_path": "workload/prompts.jsonl"
+  "output_path": "/tmp/test_trace.jsonl"
 }

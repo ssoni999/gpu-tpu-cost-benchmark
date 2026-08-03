@@ -18,6 +18,100 @@ def load_config(path: Path | str | None = None) -> dict[str, Any]:
         return yaml.safe_load(f)
 
 
+def platform_block(cfg: dict[str, Any], platform: str) -> dict[str, Any]:
+    if platform not in ("gpu", "tpu"):
+        raise ValueError(f"platform must be gpu or tpu, got {platform!r}")
+    return cfg[platform]
+
+
+def serving_vllm_args(cfg: dict[str, Any], platform: str) -> list[str]:
+    """OpenAI API server CLI flags for a platform (from benchmark_config.yaml)."""
+    block = platform_block(cfg, platform)
+    serving = block["serving"]
+    model = cfg["model"]
+    args = [
+        f"--model={model}",
+        f"--max-model-len={serving['max_model_len']}",
+        f"--max-num-batched-tokens={serving['max_num_batched_tokens']}",
+        f"--max-num-seqs={serving['max_num_seqs']}",
+        f"--tensor-parallel-size={serving['tensor_parallel_size']}",
+    ]
+    if serving.get("gpu_memory_utilization") is not None:
+        args.append(f"--gpu-memory-utilization={serving['gpu_memory_utilization']}")
+    port = block.get("k8s", {}).get("port", 8000)
+    args.append(f"--port={port}")
+    for extra in serving.get("extra_args", []):
+        token = str(extra).strip()
+        if not token.startswith("--"):
+            token = f"--{token}"
+        args.append(token)
+    return args
+
+
+def platform_metadata(cfg: dict[str, Any], platform: str) -> dict[str, Any]:
+    """Platform snapshot for replay JSON, UI, and migration docs."""
+    block = platform_block(cfg, platform)
+    return {
+        "platform": platform,
+        "accelerator": block.get("accelerator"),
+        "accelerator_count": block.get("accelerator_count"),
+        "generation": block.get("generation"),
+        "runtime_version": block.get("runtime_version"),
+        "framework": block.get("framework"),
+        "docker_image": block.get("docker_image"),
+        "recipe_ref": block.get("recipe_ref"),
+        "k8s": block.get("k8s", {}),
+        "infra": block.get("infra", {}),
+        "serving": block.get("serving", {}),
+        "vllm_args": serving_vllm_args(cfg, platform),
+    }
+
+
+def migration_diff(cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    """Side-by-side GPU vs TPU parameters for migration checklists."""
+    cfg = cfg or load_config()
+    gpu = platform_metadata(cfg, "gpu")
+    tpu = platform_metadata(cfg, "tpu")
+    rows: list[dict[str, Any]] = []
+
+    def add(category: str, key: str, gpu_val: Any, tpu_val: Any) -> None:
+        rows.append({
+            "category": category,
+            "key": key,
+            "gpu": gpu_val,
+            "tpu": tpu_val,
+            "same": gpu_val == tpu_val,
+        })
+
+    add("workload", "model", cfg["model"], cfg["model"])
+    b = cfg["benchmark"]
+    add("workload", "input_tokens", b["input_tokens"], b["input_tokens"])
+    add("workload", "output_tokens", b["output_tokens"], b["output_tokens"])
+    add("workload", "num_prompts", b["num_prompts"], b["num_prompts"])
+
+    add("infra", "docker_image", gpu["docker_image"], tpu["docker_image"])
+    add("infra", "accelerator", gpu["accelerator"], tpu["accelerator"])
+    add("infra", "runtime_version", gpu.get("runtime_version"), tpu.get("runtime_version"))
+
+    gs, ts = gpu["serving"], tpu["serving"]
+    for key in (
+        "max_model_len",
+        "max_num_batched_tokens",
+        "max_num_seqs",
+        "tensor_parallel_size",
+        "gpu_memory_utilization",
+    ):
+        add("serving", key, gs.get(key), ts.get(key))
+
+    gsel = gpu.get("infra", {}).get("node_selector", {})
+    tsel = tpu.get("infra", {}).get("node_selector", {})
+    add("k8s", "node_selector", gsel, tsel)
+    add("k8s", "deployment", gpu["k8s"].get("deployment_name"), tpu["k8s"].get("deployment_name"))
+    add("k8s", "service", gpu["k8s"].get("service_name"), tpu["k8s"].get("service_name"))
+
+    return rows
+
+
 def bench_cli_args(config: dict[str, Any] | None = None) -> list[str]:
     """vllm bench serve flags derived from benchmark_config.yaml."""
     cfg = config or load_config()

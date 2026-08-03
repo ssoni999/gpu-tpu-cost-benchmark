@@ -9,6 +9,8 @@ from pathlib import Path
 
 from aiohttp import web
 
+from config import load_config, migration_diff, platform_metadata
+
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
 RESULTS = ROOT / "results"
@@ -63,6 +65,17 @@ async def handle_results(request: web.Request) -> web.Response:
     return web.json_response(payload)
 
 
+async def handle_migration(_request: web.Request) -> web.Response:
+    cfg = load_config()
+    return web.json_response({
+        "model": cfg["model"],
+        "benchmark": cfg["benchmark"],
+        "gpu": platform_metadata(cfg, "gpu"),
+        "tpu": platform_metadata(cfg, "tpu"),
+        "diff": migration_diff(cfg),
+    })
+
+
 async def handle_compare(_request: web.Request) -> web.Response:
     comparison = _read_json(ROOT / "comparison.json")
     tpu = _read_json(RESULTS / "tpu" / "run_01_replay.json")
@@ -78,6 +91,7 @@ def build_app() -> web.Application:
     app = web.Application()
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/results/{platform}", handle_results)
+    app.router.add_get("/api/migration", handle_migration)
     app.router.add_get("/api/compare", handle_compare)
     return app
 
