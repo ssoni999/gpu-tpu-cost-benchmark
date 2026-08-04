@@ -187,9 +187,8 @@
     </div>
     <div class="panels" id="panels"></div>
     <footer>
-      Server port <strong>8787</strong> (separate from sim POC on 8765).
-      Run <code>make ui</code>, then <code>make replay TARGET=... PLATFORM=tpu</code>.
-      Refreshes every 3s while Auto is on.
+      Server port <strong>8787</strong>. Data from GCS <code>latest/</code> or local <code>results/</code>.
+      <span id="data-source">Source: loading…</span>
     </footer>
   </main>
 
@@ -357,14 +356,20 @@
 
     async function load() {
       try {
-        const [tpuRes, gpuRes, migRes] = await Promise.all([
+        const [tpuRes, gpuRes, migRes, statusRes] = await Promise.all([
           fetch('/api/results/tpu').then(r => r.json()),
           fetch('/api/results/gpu').then(r => r.json()),
           fetch('/api/migration').then(r => r.json()),
+          fetch('/api/status').then(r => r.json()),
         ]);
         panelsEl.innerHTML = renderPanel('tpu', tpuRes) + renderPanel('gpu', gpuRes);
         renderCompare(tpuRes, gpuRes);
         renderMigration(migRes.diff);
+        const src = statusRes.data_source || 'local';
+        const bucket = statusRes.gcs_bucket ? `gs://${statusRes.gcs_bucket}/${statusRes.gcs_prefix || 'latest'}` : '';
+        const manifestAt = statusRes.manifest?.updated_at;
+        document.getElementById('data-source').textContent =
+          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''}`;
         updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
         updatedEl.className = 'pill';
       } catch (e) {

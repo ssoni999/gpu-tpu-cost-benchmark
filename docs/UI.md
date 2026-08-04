@@ -31,9 +31,12 @@ When you run GPU replay too, it shows a TPU vs GPU comparison bar.
 
 | File | When |
 |------|------|
-| `results/tpu/run_01_replay.json` | After TPU `make replay` |
-| `results/gpu/run_01_replay.json` | After GPU `make replay` |
-| `results/tpu/live.json` | During replay (shows "running") |
+| `gs://gpu-tpu-benchmark-storage/latest/tpu/run_01_replay.json` | Latest TPU metrics (default for UI) |
+| `gs://gpu-tpu-benchmark-storage/latest/gpu/run_01_replay.json` | Latest GPU metrics |
+| `results/tpu/run_01_replay.json` | Local fallback when GCS unavailable |
+| `results/tpu/live.json` | During replay (in-progress) |
+
+See [GCS.md](GCS.md) for bucket setup and IAM.
 
 ## View on Mac
 

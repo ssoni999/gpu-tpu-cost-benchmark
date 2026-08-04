@@ -21,6 +21,7 @@ import numpy as np
 import openai
 
 from config import load_config, platform_metadata
+from gcs_results import try_upload_replay
 from dashboard_client import LiveDashboard
 
 # ---------------------------------------------------------------------------
@@ -896,6 +897,9 @@ def main() -> int:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {out}")
+
+    if args.platform in ("tpu", "gpu"):
+        try_upload_replay(args.platform, summary)
 
     return 0 if summary["failed_requests"] == 0 else 2
 

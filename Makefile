@@ -1,4 +1,4 @@
-.PHONY: help install trace replay replay-live dashboard ui manifests migration-diff normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace replay replay-live dashboard ui manifests migration-diff upload-results normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
@@ -7,6 +7,7 @@ MODEL ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; 
 WARMUP ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['benchmark']['warmup_requests'])")
 DASHBOARD_PORT ?= 8765
 UI_PORT ?= 8787
+RESULTS_SOURCE ?= auto
 
 help:
 	@echo "GPU vs TPU cost benchmark — Option A: trace + replay"
@@ -15,14 +16,15 @@ help:
 	@echo "  make trace                New JSONL workload (random seed unless SEED= set)"
 	@echo "  make trace SEED=100       Reproducible workload"
 	@echo "  make replay TARGET=... PLATFORM=tpu   Replay trace against vLLM"
-	@echo "  make ui                                 Results UI on port $(UI_PORT) (reads run_01_replay.json)"
+	@echo "  make ui                                 Results UI on port $(UI_PORT) (GCS or local)"
+	@echo "  make upload-results                     Push local results/*.json to GCS"
 	@echo "  make manifests                          Render tiny-model*.yaml from benchmark_config.yaml"
 	@echo "  make migration-diff                     Print GPU vs TPU parameter diff"
 	@echo "  make dashboard                        Legacy live dashboard on $(DASHBOARD_PORT)"
 	@echo "  make normalize-replay PLATFORM=tpu    Normalize replay JSON"
 	@echo "  make compare              GPU vs TPU comparison.json"
 	@echo ""
-	@echo "See docs/OPTION_A_WORKFLOW.md, docs/MIGRATION.md, and docs/UI.md"
+	@echo "See docs/OPTION_A_WORKFLOW.md, docs/MIGRATION.md, docs/GCS.md, and docs/UI.md"
 
 manifests:
 	PYTHONPATH=scripts python3 scripts/render_manifest.py
@@ -40,6 +42,7 @@ trace:
 replay:
 	@test -n "$(TARGET)" || (echo "TARGET is required, e.g. TARGET=http://127.0.0.1:8000" && exit 1)
 	@test -n "$(PLATFORM)" || (echo "PLATFORM is required: gpu or tpu" && exit 1)
+	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \
 	PYTHONPATH=scripts python3 scripts/replay.py \
 		--target $(TARGET) \
 		--model '$(MODEL)' \
@@ -54,7 +57,18 @@ replay:
 		$(if $(DASHBOARD_URL),--dashboard-url $(DASHBOARD_URL),)
 
 ui:
-	PYTHONPATH=scripts python3 scripts/results_server.py --port $(UI_PORT)
+	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \
+	PYTHONPATH=scripts python3 scripts/results_server.py --port $(UI_PORT) \
+		--source $(RESULTS_SOURCE) \
+		$(if $(GCS_BUCKET),--gcs-bucket $(GCS_BUCKET),) \
+		$(if $(GCS_PROJECT),--gcs-project $(GCS_PROJECT),)
+
+upload-results:
+	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \
+	PYTHONPATH=scripts python3 scripts/upload_results.py \
+		$(if $(GCS_BUCKET),--bucket $(GCS_BUCKET),) \
+		$(if $(GCS_PROJECT),--project $(GCS_PROJECT),) \
+		$(if $(PLATFORM),--platform $(PLATFORM),)
 
 dashboard:
 	PYTHONPATH=scripts python3 scripts/dashboard_server.py --port $(DASHBOARD_PORT)

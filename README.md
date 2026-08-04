@@ -9,6 +9,7 @@ Recipe repos (`gpu-recipes`, `tpu-recipes`) stay **adjacent and read-only** for 
 ```
 configs/benchmark_config.yaml   # Workload contract + gpu/tpu serving & infra
 configs/gpu.env.example         # Copy → gpu.env (pricing + GCP IDs)
+configs/gcs.env.example         # Copy → gcs.env (GCS bucket for results)
 configs/tpu.env.example         # Copy → tpu.env (v5e + pricing)
 scripts/run_gpu.sh              # Run on G4 GCE VM
 scripts/run_tpu.sh              # Run on TPU v5e VM
@@ -48,12 +49,13 @@ See [vLLM TPU setup](https://docs.vllm.ai/projects/tpu/en/latest/getting_started
 
 ## Quick start (Option A — trace + replay)
 
-Full steps: [docs/OPTION_A_WORKFLOW.md](docs/OPTION_A_WORKFLOW.md) · Migration: [docs/MIGRATION.md](docs/MIGRATION.md) · Results UI: [docs/UI.md](docs/UI.md)
+Full steps: [docs/OPTION_A_WORKFLOW.md](docs/OPTION_A_WORKFLOW.md) · GCS: [docs/GCS.md](docs/GCS.md) · Migration: [docs/MIGRATION.md](docs/MIGRATION.md)
 
 ```bash
 pip install -r requirements.txt
-make manifests                                  # render tiny-model*.yaml from config
-make ui                                       # port 8787 — reads run_01_replay.json
+cp configs/gcs.env.example configs/gcs.env   # GCS bucket for metrics
+make manifests
+make ui                                       # reads latest from gs://gpu-tpu-benchmark-storage/
 make trace                                    # new workload (save the printed seed)
 # deploy vLLM on GKE, port-forward :8000
 make replay TARGET=http://127.0.0.1:8000 PLATFORM=tpu

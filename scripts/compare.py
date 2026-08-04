@@ -11,6 +11,7 @@ from typing import Any
 
 from calculate_cost import compute_platform_costs
 from config import load_config
+from gcs_results import upload_comparison
 
 
 def _pct_delta(base: float | None, other: float | None) -> float | None:
@@ -125,6 +126,13 @@ def main() -> None:
     out = Path(args.output)
     out.write_text(json.dumps(comparison, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {out}")
+
+    try:
+        uri = upload_comparison(comparison)
+        if uri:
+            print(f"Uploaded comparison to {uri}")
+    except Exception as exc:  # noqa: BLE001
+        print(f"WARNING: GCS comparison upload failed: {exc}")
 
     rec = comparison["recommendation"]["recommended_platform_for_workload"]
     if rec:

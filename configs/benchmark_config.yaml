@@ -104,3 +104,10 @@ pricing:
   gpu_vm_hourly_usd: 0.0
   tpu_accelerator_hourly_usd: null
   tpu_vm_hourly_usd: 0.0
+
+storage:
+  gcs:
+    bucket: gpu-tpu-benchmark-storage
+    project: gpu-tpu-benchmark-results
+    prefix: latest          # gs://{bucket}/latest/{tpu|gpu}/run_01_replay.json
+    archive_prefix: runs    # timestamped history under runs/{platform}/

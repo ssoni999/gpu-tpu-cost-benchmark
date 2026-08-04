@@ -1,6 +1,7 @@
 # Local secrets
 configs/gpu.env
 configs/tpu.env
+configs/gcs.env
 .env
 
 workload/prompts.jsonl
