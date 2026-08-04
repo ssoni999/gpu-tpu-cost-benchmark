@@ -1,0 +1,32 @@
+
+============================================================
+ WORKLOAD BENCHMARK SUMMARY
+============================================================
+ Infrastructure Environment : TPU v5e
+ Total Wall-Clock Time      : 17.16 s
+ Successful Requests        : 200 / 200
+ Failed Requests            : 0
+ Throughput (RPS)           : 11.66 req/s
+ Generated Tokens           : 87455 tokens
+ Throughput (TPS)           : 5097.58 tokens/s
+------------------------------------------------------------
+ HARDWARE UTILIZATION METRICS:
+   Model Parameter Count    : 0.49 Billion
+   Achieved TFLOPS          : 4.9956 TFLOPS
+   Model FLOPs Util (MFU)   : 2.54 % (vs 197.0 Peak TFLOPS)
+------------------------------------------------------------
+ CLIENT-SIDE LATENCY METRICS:
+   TTFT P50 (Median)        : 364.04 ms
+   TTFT P95                 : 804.24 ms
+   Avg ITL (per-token)      : 4.50 ms
+   E2E Latency Avg          : 2.39 s
+   E2E Latency P50 (Median) : 2.35 s
+   E2E Latency P95          : 5.03 s
+------------------------------------------------------------
+ SERVER-SIDE ENGINE METRICS (/metrics):
+   Metrics Endpoint Status  : success
+   Peak KV Cache Usage      : 1.32 %
+   Prefix Cache Hit Rate    : 71.3 % (372352 / 522498 tokens)
+   Peak Queued Requests     : 0.0
+   Peak Active Requests     : 30.0
+============================================================

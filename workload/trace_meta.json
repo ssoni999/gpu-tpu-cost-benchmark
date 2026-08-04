@@ -1,7 +1,7 @@
 {
   "seed": 42,
-  "generated_at": "2026-07-31T21:54:54Z",
-  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "generated_at": "2026-07-23T19:28:12Z",
+  "model": "Qwen/Qwen3-4B",
   "num_requests": 100,
   "input_tokens": 1024,
   "output_tokens": 128,
