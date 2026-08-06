@@ -15,7 +15,7 @@ spec:
         app: tiny-model-gpu-server
     spec:
       nodeSelector:
-        cloud.google.com/gke-accelerator: nvidia-t4
+        cloud.google.com/gke-accelerator: nvidia-tesla-t4
       tolerations:
       - key: nvidia.com/gpu
         operator: Exists
