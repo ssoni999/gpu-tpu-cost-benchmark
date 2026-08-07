@@ -94,6 +94,27 @@
     .metric:nth-child(2n) { border-right: none; }
     .metric .k { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
     .metric .v { font-size: 1.05rem; font-weight: 600; margin-top: 0.15rem; }
+    .metric.win .v {
+      color: #137333;
+    }
+    .metric.win .indicator {
+      display: inline-block;
+      margin-left: 0.25rem;
+      font-size: 0.85rem;
+      color: #137333;
+      font-weight: 700;
+    }
+    .metric-section {
+      grid-column: 1 / -1;
+      padding: 0.5rem 1rem;
+      background: #f8f9fb;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.72rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+    }
     section.block { margin-top: 1.25rem; }
     section.block h3 {
       font-size: 0.75rem;
@@ -125,6 +146,8 @@
     .compare-bar.visible { display: block; }
     .compare-row { display: flex; justify-content: space-between; padding: 0.35rem 0; font-size: 0.9rem; }
     .compare-row .winner { font-weight: 600; }
+    .compare-row .winner.tpu-win { color: var(--tpu); }
+    .compare-row .winner.gpu-win { color: var(--gpu); }
     .error-banner {
       background: #fce8e6;
       border: 1px solid #f5c6c2;
@@ -205,8 +228,46 @@
       return Number(n).toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d > 0 ? 0 : d });
     }
 
-    function metric(k, v) {
-      return `<div class="metric"><div class="k">${k}</div><div class="v">${v}</div></div>`;
+    function fmtUsd(n, d = 4) {
+      if (n === undefined || n === null || Number.isNaN(Number(n))) return '—';
+      const v = Number(n);
+      if (v === 0) return '$0';
+      if (v >= 1) return '$' + v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+      if (v >= 0.0001) return '$' + v.toFixed(d);
+      return '$' + v.toExponential(2);
+    }
+
+    function metric(k, v, win = false) {
+      const cls = win ? 'metric win' : 'metric';
+      const arrow = win ? '<span class="indicator" title="Better than other platform">↑</span>' : '';
+      return `<div class="${cls}"><div class="k">${k}</div><div class="v">${v}${arrow}</div></div>`;
+    }
+
+    function metricSection(title) {
+      return `<div class="metric-section">${title}</div>`;
+    }
+
+    /** Returns true if TPU value beats GPU for this metric key. */
+    function tpuBeatsGpu(key, tpuVal, gpuVal) {
+      const na = Number(tpuVal), nb = Number(gpuVal);
+      if (Number.isNaN(na) || Number.isNaN(nb) || na === nb) return false;
+      const higherBetter = new Set([
+        'output_tokens_per_second', 'throughput_tok_s', 'requests_per_second',
+        'mfu_percent', 'achieved_tflops', 'performance_per_dollar_tok_s', 'performance_per_watt_tok_s',
+      ]);
+      const lowerBetter = new Set([
+        'wall_time_s', 'ttft_p95', 'latency_p95', 'avg_itl',
+        'run_cost_usd', 'cost_per_output_token_usd', 'cost_per_wall_second_usd',
+        'cost_per_million_output_tokens_usd',
+      ]);
+      if (higherBetter.has(key)) return na > nb;
+      if (lowerBetter.has(key)) return na < nb;
+      return false;
+    }
+
+    function cmpWin(platform, key, myVal, otherVal) {
+      if (platform !== 'tpu' || otherVal === undefined || otherVal === null) return false;
+      return tpuBeatsGpu(key, myVal, otherVal);
     }
 
     function renderServingBlock(r) {
@@ -250,8 +311,11 @@
         </table>`;
     }
 
-    function renderPanel(platform, data) {
+    function renderPanel(platform, data, otherData) {
       const r = data.replay;
+      const other = otherData?.replay;
+      const cm = data.cost_metrics || r?.cost_metrics || {};
+      const otherCm = otherData?.cost_metrics || other?.cost_metrics || {};
       const headClass = platform;
       const label = platform.toUpperCase();
 
@@ -296,28 +360,39 @@
           </div>
           ${errBlock}
           <div class="hero">
-            <div class="big">${fmt(r.output_tokens_per_second, 1)}</div>
+            <div class="big">${fmt(r.output_tokens_per_second, 1)}${cmpWin(platform, 'output_tokens_per_second', r.output_tokens_per_second, other?.output_tokens_per_second) ? ' <span class="indicator">↑</span>' : ''}</div>
             <div class="label">output tokens / sec</div>
           </div>
           <div class="grid">
+            ${metricSection('Performance')}
             ${metric('Model', r.model || '—')}
             ${metric('Infrastructure', r.infrastructure || '—')}
-            ${metric('Wall time', fmt(r.wall_time_s, 2) + ' s')}
+            ${metric('Wall time', fmt(r.wall_time_s, 2) + ' s', cmpWin(platform, 'wall_time_s', r.wall_time_s, other?.wall_time_s))}
             ${metric('Requests', `${r.successful_requests ?? '—'} ok / ${r.failed_requests ?? 0} err`)}
-            ${metric('Throughput (RPS)', fmt(r.requests_per_second, 2))}
+            ${metric('Throughput (RPS)', fmt(r.requests_per_second, 2), cmpWin(platform, 'requests_per_second', r.requests_per_second, other?.requests_per_second))}
             ${metric('Generated tokens', fmt(r.total_generated_tokens, 0))}
             ${metric('Input tokens', fmt(r.total_input_tokens, 0))}
-            ${metric('Total throughput', fmt(r.throughput_tok_s, 1) + ' tok/s')}
+            ${metric('Total throughput', fmt(r.throughput_tok_s, 1) + ' tok/s', cmpWin(platform, 'throughput_tok_s', r.throughput_tok_s, other?.throughput_tok_s))}
             ${metric('TTFT p50', fmt(ttft.p50, 1) + ' ms')}
-            ${metric('TTFT p95', fmt(ttft.p95, 1) + ' ms')}
+            ${metric('TTFT p95', fmt(ttft.p95, 1) + ' ms', cmpWin(platform, 'ttft_p95', ttft.p95, other?.ttft_ms?.p95))}
             ${metric('TTFT p99', fmt(ttft.p99, 1) + ' ms')}
-            ${metric('Latency p95', fmt(lat.p95, 1) + ' ms')}
+            ${metric('Latency p95', fmt(lat.p95, 1) + ' ms', cmpWin(platform, 'latency_p95', lat.p95, other?.latency_ms?.p95))}
             ${metric('Avg duration', fmt(lat.avg, 1) + ' ms')}
-            ${metric('Avg ITL', fmt(itl.avg, 2) + ' ms')}
+            ${metric('Avg ITL', fmt(itl.avg, 2) + ' ms', cmpWin(platform, 'avg_itl', itl.avg, other?.itl_ms?.avg))}
             ${metric('ITL p95', fmt(itl.p95, 2) + ' ms')}
-            ${metric('MFU', fmt(hw.mfu_percent, 2) + '%')}
-            ${metric('Achieved TFLOPS', fmt(hw.achieved_tflops, 4))}
+            ${metric('MFU', fmt(hw.mfu_percent, 2) + '%', cmpWin(platform, 'mfu_percent', hw.mfu_percent, other?.hardware_utilization?.mfu_percent))}
+            ${metric('Achieved TFLOPS', fmt(hw.achieved_tflops, 4), cmpWin(platform, 'achieved_tflops', hw.achieved_tflops, other?.hardware_utilization?.achieved_tflops))}
             ${metric('Peak TFLOPS', fmt(hw.peak_tflops, 0))}
+            ${metricSection('Cost & energy')}
+            ${metric('Hourly rate', fmtUsd(cm.hourly_cost_usd, 2) + '/hr')}
+            ${metric('Run cost', fmtUsd(cm.run_cost_usd), cmpWin(platform, 'run_cost_usd', cm.run_cost_usd, otherCm.run_cost_usd))}
+            ${metric('Cost / output token', fmtUsd(cm.cost_per_output_token_usd, 6), cmpWin(platform, 'cost_per_output_token_usd', cm.cost_per_output_token_usd, otherCm.cost_per_output_token_usd))}
+            ${metric('Cost / wall second', fmtUsd(cm.cost_per_wall_second_usd, 4), cmpWin(platform, 'cost_per_wall_second_usd', cm.cost_per_wall_second_usd, otherCm.cost_per_wall_second_usd))}
+            ${metric('Cost / 1M out tokens', fmtUsd(cm.cost_per_million_output_tokens_usd, 2), cmpWin(platform, 'cost_per_million_output_tokens_usd', cm.cost_per_million_output_tokens_usd, otherCm.cost_per_million_output_tokens_usd))}
+            ${metric('Perf / $', fmt(cm.performance_per_dollar_tok_s, 1) + ' tok/s/$', cmpWin(platform, 'performance_per_dollar_tok_s', cm.performance_per_dollar_tok_s, otherCm.performance_per_dollar_tok_s))}
+            ${metric('Perf / watt', fmt(cm.performance_per_watt_tok_s, 2) + ' tok/s/W', cmpWin(platform, 'performance_per_watt_tok_s', cm.performance_per_watt_tok_s, otherCm.performance_per_watt_tok_s))}
+            ${metric('Power (TDP est.)', fmt(cm.power_watts, 0) + ' W')}
+            ${metricSection('Server')}
             ${metric('KV cache peak', fmt(srv.peak_kv_cache_usage_pct, 2) + '%')}
             ${metric('Prefix hit rate', fmt(srv.prefix_cache_hit_rate_pct, 1) + '%')}
             ${metric('Prefix hits', fmt(srv.prefix_cache_hits, 0))}
@@ -335,21 +410,31 @@
       }
       const a = tpu.replay;
       const b = gpu.replay;
+      const ca = tpu.cost_metrics || a?.cost_metrics || {};
+      const cb = gpu.cost_metrics || b?.cost_metrics || {};
       const rows = [
         ['Output tok/s', a.output_tokens_per_second, b.output_tokens_per_second, true],
         ['TTFT p95 (ms)', a.ttft_ms?.p95, b.ttft_ms?.p95, false],
         ['Latency p95 (ms)', a.latency_ms?.p95, b.latency_ms?.p95, false],
         ['MFU %', a.hardware_utilization?.mfu_percent, b.hardware_utilization?.mfu_percent, true],
         ['Wall time (s)', a.wall_time_s, b.wall_time_s, false],
+        ['Run cost ($)', ca.run_cost_usd, cb.run_cost_usd, false],
+        ['Cost / output token', ca.cost_per_output_token_usd, cb.cost_per_output_token_usd, false],
+        ['Cost / wall second', ca.cost_per_wall_second_usd, cb.cost_per_wall_second_usd, false],
+        ['Perf / watt (tok/s/W)', ca.performance_per_watt_tok_s, cb.performance_per_watt_tok_s, true],
+        ['Perf / $ (tok/s/$)', ca.performance_per_dollar_tok_s, cb.performance_per_dollar_tok_s, true],
       ];
       compareRows.innerHTML = rows.map(([label, va, vb, higherBetter]) => {
         const na = Number(va), nb = Number(vb);
         let win = '—';
+        let winCls = '';
         if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) {
           const tpuWins = higherBetter ? na > nb : na < nb;
-          win = tpuWins ? 'TPU' : 'GPU';
+          win = tpuWins ? '↑ TPU' : 'GPU';
+          winCls = tpuWins ? 'tpu-win' : 'gpu-win';
         }
-        return `<div class="compare-row"><span>${label}</span><span>TPU ${fmt(va)} · GPU ${fmt(vb)} <span class="winner">${win !== '—' ? '→ ' + win : ''}</span></span></div>`;
+        const fmtVal = (v) => label.includes('$') || label.includes('Cost') ? fmtUsd(v, 6) : fmt(v);
+        return `<div class="compare-row"><span>${label}</span><span>TPU ${fmtVal(va)} · GPU ${fmtVal(vb)} <span class="winner ${winCls}">${win !== '—' ? win : ''}</span></span></div>`;
       }).join('');
       compareBar.classList.add('visible');
     }
@@ -362,7 +447,7 @@
           fetch('/api/migration').then(r => r.json()),
           fetch('/api/status').then(r => r.json()),
         ]);
-        panelsEl.innerHTML = renderPanel('tpu', tpuRes) + renderPanel('gpu', gpuRes);
+        panelsEl.innerHTML = renderPanel('tpu', tpuRes, gpuRes) + renderPanel('gpu', gpuRes, tpuRes);
         renderCompare(tpuRes, gpuRes);
         renderMigration(migRes.diff);
         const src = statusRes.data_source || 'local';

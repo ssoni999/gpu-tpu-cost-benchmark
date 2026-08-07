@@ -54,6 +54,16 @@ Port 8765 may be used by **gpu-tpu-sim-poc** (mock matmul UI). This results UI u
 
 The UI loads GPU vs TPU serving/infra differences from `configs/benchmark_config.yaml` via `/api/migration`.
 
+## Cost & energy metrics
+
+The UI computes cost metrics from replay results + pricing in `benchmark_config.yaml` (or `results/{platform}/run_01_environment.json` if present):
+
+- Run cost, cost per output token, cost per wall second
+- Performance per dollar and **performance per watt** (tok/s ÷ TDP)
+- Green **↑** on the TPU panel when TPU beats GPU on that metric
+
+Set real rates in `configs/gpu.env` / `configs/tpu.env` and write `run_01_environment.json` via normalize-replay for accurate dollars.
+
 See [MIGRATION.md](MIGRATION.md) for deploy checklists. After editing config:
 
 ```bash

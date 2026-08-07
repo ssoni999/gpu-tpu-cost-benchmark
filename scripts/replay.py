@@ -21,6 +21,7 @@ import numpy as np
 import openai
 
 from config import load_config, platform_metadata
+from cost_metrics import compute_replay_cost_metrics
 from gcs_results import try_upload_replay
 from dashboard_client import LiveDashboard
 
@@ -884,6 +885,7 @@ def main() -> int:
             "output_tokens": cfg["benchmark"]["output_tokens"],
             "seed": cfg["benchmark"].get("seed"),
         }
+        summary["cost_metrics"] = compute_replay_cost_metrics(summary, args.platform)
     print_summary(summary)
 
     if live is not None:

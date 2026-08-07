@@ -23,9 +23,10 @@ slo:
 
 gpu:
   platform: gpu
-  accelerator: nvidia-t4
+  accelerator: nvidia-tesla-t4
   accelerator_count: 1
   machine_type: n1-standard-4
+  power_watts: 70
   framework: vllm
   docker_image: vllm/vllm-openai:latest
   recipe_ref: ../gpu-recipes/inference/g4/single-host-serving/vllm/README.md
@@ -66,6 +67,7 @@ tpu:
   accelerator: v5litepod-1
   accelerator_count: 1
   runtime_version: v2-alpha-tpuv5-lite
+  power_watts: 200
   framework: vllm
   docker_image: vllm/vllm-tpu:latest
   # Official tpu-recipes Qwen3 guide targets v6e; this project pins v5e (see README).
@@ -99,11 +101,14 @@ tpu:
     extra_args: []
 
 pricing:
-  # Set at run time in configs/gpu.env or configs/tpu.env (not committed).
-  gpu_accelerator_hourly_usd: null
-  gpu_vm_hourly_usd: 0.0
-  tpu_accelerator_hourly_usd: null
+  # Defaults for UI cost metrics when results/{platform}/run_01_environment.json is absent.
+  # Override at runtime via gpu.env / tpu.env → environment.json.
+  gpu_accelerator_hourly_usd: 0.35
+  gpu_vm_hourly_usd: 0.10
+  tpu_accelerator_hourly_usd: 1.20
   tpu_vm_hourly_usd: 0.0
+  gpu_tdp_watts: 70          # NVIDIA T4 chip TDP (approx)
+  tpu_tdp_watts: 200         # TPU v5e single chip (approx)
 
 storage:
   gcs:

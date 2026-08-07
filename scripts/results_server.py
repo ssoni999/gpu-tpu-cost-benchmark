@@ -12,6 +12,7 @@ from typing import Any
 from aiohttp import web
 
 from config import load_config, migration_diff, platform_metadata
+from cost_metrics import compute_replay_cost_metrics
 from gcs_results import GcsResultsStore, GcsSettings, gcs_settings, latest_replay_object
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -120,6 +121,9 @@ def build_app(backend: ResultsBackend) -> web.Application:
 
         replay, replay_path = await backend.get_replay(platform)
         live, live_path = await backend.get_live(platform)
+        cost_metrics = None
+        if replay:
+            cost_metrics = compute_replay_cost_metrics(replay, platform)
         payload = {
             "platform": platform,
             "data_source": backend.data_source,
@@ -127,11 +131,13 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "live_path": live_path,
             "replay": replay,
             "live": live,
+            "cost_metrics": cost_metrics,
             "has_replay": replay is not None,
             "is_running": bool(live and live.get("status") == "running"),
         }
         if replay is None and live and live.get("summary"):
             payload["replay"] = live["summary"]
+            payload["cost_metrics"] = compute_replay_cost_metrics(live["summary"], platform)
             payload["has_replay"] = True
         return web.json_response(payload)
 
