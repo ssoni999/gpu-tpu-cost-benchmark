@@ -1,4 +1,4 @@
-.PHONY: help install trace trace-all replay replay-all replay-live dashboard ui setup-gcs manifests migration-diff upload-results pull-gcs rebuild-gcs-manifest normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace trace-all replay replay-all replay-live dashboard ui setup-gcs check-gcs manifests migration-diff upload-results pull-gcs rebuild-gcs-manifest normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
@@ -20,7 +20,7 @@ help:
 	@echo "  make replay-all TARGET=...   Replay all tiers on tpu + gpu (needs port-forward)"
 	@echo "  make replay TARGET=... PLATFORM=tpu TIER=medium"
 	@echo "  make ui                                 Results UI on port $(UI_PORT) (GCS default)"
-	@echo "  make setup-gcs                          ADC login for GCS reads (run once per session)"
+	@echo "  make setup-gcs / check-gcs           Verify GCS bucket access (no login on Cloud Shell)"
 	@echo "  make rebuild-gcs-manifest               Write latest/manifest.json from bucket objects"
 	@echo "  make upload-results                     Push local results/*.json to GCS"
 	@echo "  make manifests                          Render tiny-model*.yaml from benchmark_config.yaml"
@@ -91,9 +91,12 @@ ui:
 
 setup-gcs:
 	@if [ ! -f configs/gcs.env ]; then cp configs/gcs.env.example configs/gcs.env; fi
-	@echo "Run this once per Cloud Shell session (or when ADC expires):"
-	@echo "  gcloud auth application-default login --project=gpu-tpu-benchmark-results"
-	@gcloud auth application-default login --project=gpu-tpu-benchmark-results
+	@set -a; . configs/gcs.env; set +a; \
+	PYTHONPATH=scripts python3 scripts/check_gcs_setup.py
+
+check-gcs:
+	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \
+	PYTHONPATH=scripts python3 scripts/check_gcs_setup.py
 
 upload-results:
 	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \

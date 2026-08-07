@@ -569,11 +569,20 @@ def check_gcs_access(settings: GcsSettings | None = None) -> dict[str, Any]:
         "prefix": settings.prefix,
         "adc_project": None,
         "error": None,
-        "fix": (
-            "gcloud auth application-default login "
-            f"--project={settings.project or DEFAULT_PROJECT}"
-        ),
+        "fix": "",
     }
+    if os.environ.get("CLOUD_SHELL"):
+        out["fix"] = (
+            f"Grant Storage Object Viewer on gs://{settings.bucket} to your Cloud Shell "
+            f"user/service account (project {settings.project or DEFAULT_PROJECT}). "
+            "Do not run gcloud auth application-default login on Cloud Shell."
+        )
+    else:
+        out["fix"] = (
+            "gcloud auth application-default login "
+            f"--project={settings.project or DEFAULT_PROJECT} "
+            "--scopes=https://www.googleapis.com/auth/cloud-platform"
+        )
     try:
         import google.auth
 

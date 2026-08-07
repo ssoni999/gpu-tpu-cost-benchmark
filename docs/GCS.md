@@ -29,8 +29,14 @@ gcloud services enable storage.googleapis.com --project=gpu-tpu-benchmark-result
 # 2. Grant your account write access to the bucket
 gcloud storage buckets describe gs://gpu-tpu-benchmark-storage --project=gpu-tpu-benchmark-results
 
-# 3. Application Default Credentials (Cloud Shell usually has this already)
-gcloud auth application-default login --project=gpu-tpu-benchmark-results
+# 3. Cloud Shell: credentials come from the VM automatically — do NOT run
+#    gcloud auth application-default login (it crashes with scope errors).
+#    Verify access instead:
+make check-gcs
+
+# 3b. Local laptop only (not Cloud Shell):
+# gcloud auth application-default login --project=gpu-tpu-benchmark-results \
+#   --scopes=https://www.googleapis.com/auth/cloud-platform
 
 # 4. Configure repo
 cp configs/gcs.env.example configs/gcs.env

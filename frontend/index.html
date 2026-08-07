@@ -980,7 +980,7 @@
           : gcsErr
             ? `<strong>GCS read failed</strong> — metrics exist in the bucket but this machine cannot authenticate.<br>`
               + `<code>${String(gcsErr).slice(0, 300)}</code><br>`
-              + `Fix: <code>make setup-gcs</code> or <code>gcloud auth application-default login --project=gpu-tpu-benchmark-results</code>`
+              + `Fix: run <code>make check-gcs</code> — on Cloud Shell do <em>not</em> run gcloud auth application-default login`
             : `No <strong>${tier}</strong> replay for ${platform.toUpperCase()}.<br>`
               + `Run:<br><code>make replay TARGET=http://127.0.0.1:8000 PLATFORM=${platform} TIER=${tier} MODEL='Qwen/Qwen2.5-0.5B-Instruct'</code>`
               + `<br><span style="font-size:0.8rem">Measured tiers for ${platform}: ${avail}</span>`;
