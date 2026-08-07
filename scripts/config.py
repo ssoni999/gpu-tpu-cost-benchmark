@@ -77,14 +77,14 @@ def replay_matches_tier(replay: dict[str, Any], tier: str, cfg: dict[str, Any] |
     if actual is None:
         actual = int(replay.get("successful_requests") or 0) + int(replay.get("failed_requests") or 0)
 
-    # Prompt count is the ground truth — ignore workload_tier tags on duplicate uploads.
-    if expected and actual and actual != expected:
-        return False
+    # Prompt count is definitive when present.
+    if expected and actual:
+        return actual == expected
 
     trace = str(bc.get("trace") or replay.get("trace") or "")
     trace_tier = _trace_implies_tier(trace, cfg)
-    if trace_tier is not None and trace_tier != tier:
-        return False
+    if trace_tier is not None:
+        return trace_tier == tier
 
     embedded = bc.get("workload_tier") or replay.get("workload_tier")
     if embedded in workload_tier_ids(cfg):

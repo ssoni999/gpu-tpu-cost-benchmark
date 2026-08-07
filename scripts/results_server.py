@@ -25,7 +25,13 @@ from config import (
     workloads_catalog,
 )
 from cost_metrics import compute_replay_cost_metrics
-from gcs_results import GcsResultsStore, GcsSettings, gcs_settings, latest_replay_object
+from gcs_results import (
+    GcsResultsStore,
+    GcsSettings,
+    gcs_settings,
+    latest_replay_object,
+    manifest_tier_entry,
+)
 from workload_projection import resolve_tier_replay
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,16 +83,32 @@ def _collect_replay_file(
         paths[path_tier] = str(path.relative_to(ROOT))
 
 
+def _local_replay_mtime(platform: str, tier: str) -> float:
+    best = 0.0
+    for path in _local_replay_candidates(platform, tier):
+        if path.exists():
+            best = max(best, path.stat().st_mtime)
+    return best
+
+
 class ResultsBackend:
     def __init__(self, source: str, gcs: GcsResultsStore | None) -> None:
         self.source = source
         self.gcs = gcs
+        self._tier_sources: dict[str, dict[str, str]] = {}
 
     @property
     def data_source(self) -> str:
-        if self.source == "gcs" or (self.source == "auto" and self.gcs and self.gcs.enabled):
+        if self.source == "gcs":
             return "gcs"
+        if self.source == "local":
+            return "local"
+        if self.gcs and self.gcs.enabled:
+            return "auto (gcs+local)"
         return "local"
+
+    def tier_sources(self, platform: str) -> dict[str, str]:
+        return dict(self._tier_sources.get(platform, {}))
 
     async def _gcs_read(self, fn) -> dict[str, Any] | None:
         if not self.gcs or not self.gcs.enabled:
@@ -112,15 +134,78 @@ class ResultsBackend:
         paths: dict[str, str] = {}
         if not self.gcs or not self.gcs.enabled:
             return found, paths
+        manifest = await self._gcs_read(self.gcs.read_manifest) or {}  # type: ignore[union-attr]
+        settings = self.gcs.settings
         for tier in workload_tier_ids():
             replay = await self._gcs_read(
                 lambda p=platform, t=tier: self.gcs.read_replay(p, t)  # type: ignore[union-attr]
             )
             if replay is not None and tier not in found and replay_matches_tier(replay, tier, cfg):
                 found[tier] = replay
-                obj = latest_replay_object(platform, self.gcs.settings, tier=tier)
-                paths[tier] = f"gs://{self.gcs.settings.bucket}/{obj}"
+                entry = manifest_tier_entry(manifest, platform, tier)
+                uri = entry.get("latest_uri")
+                if uri:
+                    paths[tier] = str(uri)
+                else:
+                    obj = latest_replay_object(platform, settings, tier=tier)
+                    paths[tier] = f"gs://{settings.bucket}/{obj}"
         return found, paths
+
+    async def _merge_replay_sources(
+        self, platform: str,
+    ) -> tuple[dict[str, dict[str, Any]], dict[str, str], dict[str, str]]:
+        """Load replays; in auto mode pick newest per tier (GCS wins ties)."""
+        cfg = load_config()
+        replays: dict[str, dict[str, Any]] = {}
+        paths: dict[str, str] = {}
+        sources: dict[str, str] = {}
+
+        local_replays: dict[str, dict[str, Any]] = {}
+        local_paths: dict[str, str] = {}
+        gcs_replays: dict[str, dict[str, Any]] = {}
+        gcs_paths: dict[str, str] = {}
+
+        if self.source in ("local", "auto"):
+            local_replays, local_paths = await self._load_local_replays(platform)
+        if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
+            gcs_replays, gcs_paths = await self._load_gcs_replays(platform)
+
+        if self.source == "gcs":
+            for tier, data in gcs_replays.items():
+                replays[tier] = data
+                paths[tier] = gcs_paths[tier]
+                sources[tier] = "gcs"
+        elif self.source == "local":
+            for tier, data in local_replays.items():
+                replays[tier] = data
+                paths[tier] = local_paths[tier]
+                sources[tier] = "local"
+        else:
+            for tier in workload_tier_ids():
+                local_r = local_replays.get(tier)
+                gcs_r = gcs_replays.get(tier)
+                if local_r and gcs_r:
+                    local_ts = _local_replay_mtime(platform, tier)
+                    gcs_ts = self.gcs.tier_upload_epoch(platform, tier) if self.gcs else 0.0
+                    if gcs_ts >= local_ts:
+                        replays[tier] = gcs_r
+                        paths[tier] = gcs_paths[tier]
+                        sources[tier] = "gcs"
+                    else:
+                        replays[tier] = local_r
+                        paths[tier] = local_paths[tier]
+                        sources[tier] = "local"
+                elif gcs_r:
+                    replays[tier] = gcs_r
+                    paths[tier] = gcs_paths[tier]
+                    sources[tier] = "gcs"
+                elif local_r:
+                    replays[tier] = local_r
+                    paths[tier] = local_paths[tier]
+                    sources[tier] = "local"
+
+        self._tier_sources[platform] = sources
+        return replays, paths, sources
 
     async def get_replay(
         self,
@@ -132,19 +217,7 @@ class ResultsBackend:
         """Return replay for tier. Projection is opt-in (disabled by default)."""
         cfg = load_config()
         tier = tier or default_workload(cfg)
-        replays: dict[str, dict[str, Any]] = {}
-        replay_paths: dict[str, str] = {}
-
-        # Local results win over GCS so Cloud Shell tier replays aren't masked by stale GCS.
-        if self.source in ("local", "auto"):
-            local_replays, local_paths = await self._load_local_replays(platform)
-            replays.update(local_replays)
-            replay_paths.update(local_paths)
-        if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
-            gcs_replays, gcs_paths = await self._load_gcs_replays(platform)
-            for t, data in gcs_replays.items():
-                replays.setdefault(t, data)
-                replay_paths.setdefault(t, gcs_paths[t])
+        replays, replay_paths, _sources = await self._merge_replay_sources(platform)
 
         if tier in replays and replay_matches_tier(replays[tier], tier, cfg):
             replay = dict(replays[tier])
@@ -163,14 +236,7 @@ class ResultsBackend:
         return None, str(replay_result_path(platform, tier).relative_to(ROOT)), False, tier
 
     async def list_measured_tiers(self, platform: str) -> list[str]:
-        replays: dict[str, dict[str, Any]] = {}
-        if self.source in ("local", "auto"):
-            local_replays, _ = await self._load_local_replays(platform)
-            replays.update(local_replays)
-        if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
-            gcs_replays, _ = await self._load_gcs_replays(platform)
-            for t, data in gcs_replays.items():
-                replays.setdefault(t, data)
+        replays, _, _ = await self._merge_replay_sources(platform)
         return sorted(replays.keys())
 
     async def get_live(self, platform: str, tier: str | None = None) -> tuple[dict[str, Any] | None, str]:
@@ -234,10 +300,15 @@ def build_app(backend: ResultsBackend) -> web.Application:
         settings = backend.gcs.settings if backend.gcs else None
         return web.json_response({
             "data_source": backend.data_source,
+            "results_source": backend.source,
             "gcs_bucket": settings.bucket if settings else None,
             "gcs_project": settings.project if settings else None,
             "gcs_prefix": settings.prefix if settings else None,
             "manifest": manifest,
+            "tier_sources": {
+                "tpu": backend.tier_sources("tpu"),
+                "gpu": backend.tier_sources("gpu"),
+            },
         })
 
     async def handle_workloads(_request: web.Request) -> web.Response:
@@ -263,14 +334,17 @@ def build_app(backend: ResultsBackend) -> web.Application:
         if replay:
             cost_metrics = replay.get("cost_metrics") or compute_replay_cost_metrics(replay, platform)
         is_running = bool(live and live.get("status") == "running")
+        resolved = resolved_tier or tier or default_workload()
         payload = {
             "platform": platform,
             "requested_tier": tier or default_workload(),
-            "workload_tier": resolved_tier,
+            "workload_tier": resolved,
             "projected": projected,
             "tier_missing": replay is None and not is_running,
             "available_tiers": sorted(await backend.list_measured_tiers(platform)),
             "data_source": backend.data_source,
+            "results_source": backend.source,
+            "replay_source": backend.tier_sources(platform).get(resolved),
             "replay_path": replay_path,
             "live_path": live_path,
             "replay": replay,
@@ -330,8 +404,8 @@ def main() -> None:
     parser.add_argument(
         "--source",
         choices=["auto", "gcs", "local"],
-        default="local",
-        help="local: results/ only; auto: local first then GCS; gcs: GCS only",
+        default="auto",
+        help="auto: merge GCS + local (newest per tier); gcs: GCS only; local: results/ only",
     )
     parser.add_argument("--gcs-bucket", help="Override GCS_RESULTS_BUCKET")
     parser.add_argument("--gcs-project", help="Override GCS_RESULTS_PROJECT")
@@ -347,10 +421,15 @@ def main() -> None:
     backend = ResultsBackend(source=args.source, gcs=gcs_store)
 
     print(f"Results UI: http://127.0.0.1:{args.port}/")
-    if backend.data_source == "gcs":
-        print(f"  Data source: GCS gs://{settings.bucket}/{settings.prefix}/")
+    print(f"  Results source: {args.source}")
+    if backend.gcs and backend.gcs.enabled:
+        print(f"  GCS: gs://{settings.bucket}/{settings.prefix}/")
+    if args.source == "local":
+        print("  Reading: local results/ only (set RESULTS_SOURCE=auto or gcs to use GCS)")
+    elif args.source == "gcs":
+        print("  Reading: GCS only")
     else:
-        print("  Data source: local results/{tpu,gpu}/run_01_replay.json")
+        print("  Reading: GCS + local (newest per tier wins)")
     print("  Cloud Shell: Web Preview → port", args.port)
 
     web.run_app(build_app(backend), host=args.host, port=args.port, print=None)

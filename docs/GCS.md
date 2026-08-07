@@ -9,11 +9,12 @@ The UI reads the **latest** results from the bucket by default.
 ```
 gs://gpu-tpu-benchmark-storage/
   latest/
-    manifest.json                 # pointers + upload timestamps
-    tpu/run_01_replay.json        # latest TPU metrics
-    gpu/run_01_replay.json        # latest GPU metrics
-    tpu/live.json                 # in-progress run (optional)
-    comparison.json               # after make compare
+    manifest.json                 # pointers + upload timestamps per tier
+    small/tpu/run_01_replay.json  # tier-specific (Simple)
+    medium/tpu/run_01_replay.json # tier-specific (Medium)
+    high/tpu/run_01_replay.json   # tier-specific (Complex)
+    tpu/run_01_replay.json        # legacy medium layout (fallback)
+    gpu/...
   runs/
     tpu/2026-08-04T173000Z_run_01_replay.json   # archived history
     gpu/...
@@ -74,9 +75,9 @@ make ui
 # Web Preview → port 8787
 ```
 
-The UI uses `--source auto` (default): reads GCS when the bucket is configured, falls back to local `results/` if GCS is empty or unreachable.
+The UI uses `--source auto` (default): merges GCS + local `results/`, picking the **newest per tier** (GCS wins ties).
 
-Force GCS-only:
+Force GCS-only (recommended when bucket is source of truth):
 
 ```bash
 make ui RESULTS_SOURCE=gcs

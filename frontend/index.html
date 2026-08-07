@@ -1116,13 +1116,15 @@
         panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
         renderCompare(tpuRes, gpuRes);
         renderHardwareSpecs(resolveAllHardware(gpuRes, tpuRes, hwRes, migRes));
-        const src = statusRes.data_source || 'local';
+        const src = statusRes.data_source || statusRes.results_source || 'local';
         const bucket = statusRes.gcs_bucket ? `gs://${statusRes.gcs_bucket}/${statusRes.gcs_prefix || 'latest'}` : '';
         const manifestAt = statusRes.manifest?.updated_at;
         const availTpu = (tpuRes.available_tiers || []).join(', ') || 'none';
         const availGpu = (gpuRes.available_tiers || []).join(', ') || 'none';
+        const tpuSrc = tpuRes.replay_source || statusRes.tier_sources?.tpu?.[currentWorkload] || '—';
+        const gpuSrc = gpuRes.replay_source || statusRes.tier_sources?.gpu?.[currentWorkload] || '—';
         document.getElementById('data-source').textContent =
-          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''} · workload: ${currentWorkload} · tpu tiers: ${availTpu} · gpu tiers: ${availGpu}`;
+          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''} · workload: ${currentWorkload} · tpu: ${tpuSrc} (${availTpu}) · gpu: ${gpuSrc} (${availGpu})`;
         updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
         updatedEl.className = 'pill';
       } catch (e) {

@@ -123,6 +123,52 @@ def manifest_object(settings: GcsSettings | None = None) -> str:
     return f"{settings.prefix}/manifest.json"
 
 
+def gs_uri_to_object(uri: str, bucket: str) -> str | None:
+    """Convert gs://bucket/key to object key."""
+    prefix = f"gs://{bucket}/"
+    if uri.startswith(prefix):
+        return uri[len(prefix):]
+    return None
+
+
+def manifest_tier_entry(
+    manifest: dict[str, Any],
+    platform: str,
+    tier: str,
+) -> dict[str, Any]:
+    platforms = manifest.get("platforms") or {}
+    block = platforms.get(platform) or {}
+    tiers = block.get("tiers") or {}
+    return tiers.get(tier) or {}
+
+
+def manifest_replay_candidates(
+    manifest: dict[str, Any],
+    platform: str,
+    tier: str,
+    settings: GcsSettings,
+) -> list[str]:
+    """Object paths to try for a tier replay (manifest URI first, then canonical paths)."""
+    objects: list[str] = []
+    entry = manifest_tier_entry(manifest, platform, tier)
+    uri = entry.get("latest_uri")
+    if uri:
+        obj = gs_uri_to_object(str(uri), settings.bucket)
+        if obj:
+            objects.append(obj)
+    objects.append(latest_replay_object(platform, settings, tier=tier))
+    if tier == "medium":
+        objects.append(legacy_latest_replay_object(platform, settings))
+    # De-dupe while preserving order.
+    seen: set[str] = set()
+    out: list[str] = []
+    for obj in objects:
+        if obj not in seen:
+            seen.add(obj)
+            out.append(obj)
+    return out
+
+
 def read_manifest(settings: GcsSettings | None = None) -> dict[str, Any]:
     settings = settings or gcs_settings()
     return download_json(manifest_object(settings), settings=settings) or {}
@@ -310,20 +356,35 @@ class GcsResultsStore:
     def read_replay(self, platform: str, tier: str = "medium") -> dict[str, Any] | None:
         if not self.enabled:
             return None
-        obj = latest_replay_object(platform, self.settings, tier=tier)
 
         def _load() -> dict[str, Any] | None:
-            data = download_json(obj, settings=self.settings)
-            if data is not None:
-                return data
-            if tier == "medium":
-                return download_json(
-                    legacy_latest_replay_object(platform, self.settings),
-                    settings=self.settings,
-                )
+            manifest = read_manifest(self.settings)
+            for obj in manifest_replay_candidates(manifest, platform, tier, self.settings):
+                data = download_json(obj, settings=self.settings)
+                if data is not None:
+                    return data
             return None
 
         return self._cached(f"replay:{platform}:{tier}", _load)
+
+    def tier_upload_epoch(self, platform: str, tier: str) -> float:
+        """Unix timestamp from manifest uploaded_at, or 0 if unknown."""
+        if not self.enabled:
+            return 0.0
+
+        def _load() -> float:
+            manifest = read_manifest(self.settings)
+            entry = manifest_tier_entry(manifest, platform, tier)
+            uploaded = entry.get("uploaded_at")
+            if not uploaded:
+                return 0.0
+            try:
+                dt = datetime.fromisoformat(str(uploaded).replace("Z", "+00:00"))
+                return dt.timestamp()
+            except ValueError:
+                return 0.0
+
+        return float(self._cached(f"tier_ts:{platform}:{tier}", _load) or 0.0)
 
     def read_live(self, platform: str, tier: str = "medium") -> dict[str, Any] | None:
         if not self.enabled:
