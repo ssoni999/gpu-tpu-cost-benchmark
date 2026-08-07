@@ -14,9 +14,10 @@ from config import default_workload, load_config, workload_profile, workload_tra
 from prompt_catalog import SHARED_HANDBOOK, build_user_prompt
 
 
-# Word-split budgets underestimate BPE token counts (~1.9x on Qwen-style prompts).
-BPE_TOKENS_PER_WORD = 1.9
+# Word-split budgets underestimate BPE on Qwen-style prompts; use a conservative ratio.
+BPE_TOKENS_PER_WORD = 2.15
 CHAT_TEMPLATE_BUFFER = 32
+TOKEN_BUDGET_SAFETY = 16
 
 
 def _approx_tokens(text: str) -> int:
@@ -32,6 +33,16 @@ def _trim_to_tokens(text: str, target_tokens: int) -> str:
     if len(words) <= target_tokens:
         return text
     return " ".join(words[:target_tokens])
+
+
+def _enforce_max_prompt_tokens(prompt: str, max_prompt_tokens: int) -> str:
+    """Trim from the end until the conservative token estimate fits."""
+    if _approx_tokens(prompt) <= max_prompt_tokens:
+        return prompt
+    words = prompt.split()
+    while len(words) > 64 and _approx_tokens(" ".join(words)) > max_prompt_tokens:
+        words = words[:-12]
+    return " ".join(words)
 
 
 def _append_varied_context(rng: random.Random, text: str, target_tokens: int, request_id: int) -> str:
@@ -111,11 +122,11 @@ def generate_trace(
 ) -> list[dict]:
     rng = random.Random(seed)
     system_prompt = _shared_prefix(shared_prefix_tokens)
-    max_prompt_tokens = max_model_len - output_tokens - CHAT_TEMPLATE_BUFFER
+    max_prompt_tokens = max_model_len - output_tokens - CHAT_TEMPLATE_BUFFER - TOKEN_BUDGET_SAFETY
     system_tok = _approx_tokens(system_prompt)
-    fit_budget = _word_budget(max(64, max_prompt_tokens - system_tok - 8))
-    config_budget = max(64, input_tokens - len(system_prompt.split()) - 4)
-    user_budget = min(fit_budget, config_budget)
+    user_token_cap = max(64, max_prompt_tokens - system_tok - 8)
+    user_token_target = min(input_tokens, user_token_cap)
+    user_budget = _word_budget(user_token_target)
     offsets = _generate_offsets(rng, num_requests, span_seconds)
     records = []
     seen_prompts: set[str] = set()
@@ -134,6 +145,7 @@ def generate_trace(
             user_body = build_user_prompt(req_rng, request_id + attempt * 1000)
             user_body = _append_varied_context(req_rng, user_body, user_budget, request_id + attempt)
             prompt = f"{system_prompt}\n\n---\n\n{user_body}"
+        prompt = _enforce_max_prompt_tokens(prompt, max_prompt_tokens)
         seen_prompts.add(prompt)
 
         records.append(
@@ -253,6 +265,8 @@ def main() -> None:
     print(f"Metadata: {meta_path}")
     print(f"Approx prompt tokens (first prompt): {_approx_tokens(records[0]['prompt'])}")
     print(f"Max model len (trace cap): {max_model_len} (prompt + {output_tokens} output must fit)")
+    peak = max(_approx_tokens(r["prompt"]) for r in records)
+    print(f"Peak approx prompt tokens: {peak} (limit {max_model_len - output_tokens - CHAT_TEMPLATE_BUFFER})")
 
 
 if __name__ == "__main__":
