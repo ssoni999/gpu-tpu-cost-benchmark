@@ -972,7 +972,7 @@
 
       if (!data.has_replay) {
         const status = data.is_running ? 'running' : 'missing';
-        const tier = data.workload_tier || currentWorkload;
+        const tier = data.requested_tier || data.workload_tier || currentWorkload;
         const avail = (data.available_tiers || []).join(', ') || 'none';
         const msg = data.is_running
           ? 'Replay in progress… (reading live.json)'
@@ -1007,10 +1007,15 @@
         return `<div class="error-banner"><strong>All ${es.total_failures} requests failed</strong> — metrics are zero until replay succeeds.<ul class="error-list">${items}</ul></div>`;
       })();
 
-      const tierLabel = workloadMeta(data.workload_tier || currentWorkload).label || currentWorkload;
+      const measuredTier = r?.benchmark_contract?.workload_tier || r?.workload_tier || data.workload_tier;
+      const tierLabel = workloadMeta(measuredTier).label || measuredTier;
+      const requestedTier = data.requested_tier || currentWorkload;
+      const tierMismatch = measuredTier && requestedTier && measuredTier !== requestedTier;
       const projectedBadge = data.projected
         ? '<span class="projected-badge" title="Scaled from measured replay">Projected</span>'
-        : `<span class="projected-badge" style="background:rgba(74,222,128,0.12);color:var(--tpu-bright);border-color:rgba(74,222,128,0.25)" title="${data.replay_path || ''}">Measured · ${tierLabel}</span>`;
+        : tierMismatch
+          ? `<span class="projected-badge" style="background:rgba(251,191,36,0.12);color:#fbbf24;border-color:rgba(251,191,36,0.25)" title="Replay tier ${measuredTier} ≠ requested ${requestedTier}">Tier mismatch</span>`
+          : `<span class="projected-badge" style="background:rgba(74,222,128,0.12);color:var(--tpu-bright);border-color:rgba(74,222,128,0.25)" title="${data.replay_path || ''}">Measured · ${tierLabel}</span>`;
 
       return `
         <div class="panel ${headClass}">

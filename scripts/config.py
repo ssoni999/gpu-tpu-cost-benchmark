@@ -51,6 +51,25 @@ def workload_profile(cfg: dict[str, Any] | None, tier: str) -> dict[str, Any]:
     return base
 
 
+def replay_matches_tier(replay: dict[str, Any], tier: str, cfg: dict[str, Any] | None = None) -> bool:
+    """True when replay was measured for this workload tier (not a duplicate/stale file)."""
+    cfg = cfg or load_config()
+    if tier not in workload_tier_ids(cfg):
+        return False
+    bc = replay.get("benchmark_contract") or {}
+    embedded = bc.get("workload_tier") or replay.get("workload_tier")
+    if embedded in workload_tier_ids(cfg):
+        return embedded == tier
+    profile = workload_profile(cfg, tier)
+    expected = int(profile.get("num_prompts") or 0)
+    actual = bc.get("num_requests")
+    if actual is None:
+        actual = int(replay.get("successful_requests") or 0) + int(replay.get("failed_requests") or 0)
+    if expected and actual:
+        return actual == expected
+    return tier == default_workload(cfg)
+
+
 def workload_trace_path(tier: str, root: Path | None = None) -> Path:
     root = root or ROOT
     return root / "workload" / tier / "prompts.jsonl"

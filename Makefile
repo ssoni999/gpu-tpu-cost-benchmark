@@ -9,7 +9,7 @@ MODEL ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; 
 WARMUP ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['benchmark']['warmup_requests'])")
 DASHBOARD_PORT ?= 8765
 UI_PORT ?= 8787
-RESULTS_SOURCE ?= auto
+RESULTS_SOURCE ?= local
 
 help:
 	@echo "GPU vs TPU cost benchmark — Option A: trace + replay"

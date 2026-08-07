@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from config import load_config
+from config import load_config, workload_tier_ids
 
 PLATFORMS = ("tpu", "gpu")
 DEFAULT_BUCKET = "gpu-tpu-benchmark-storage"
@@ -171,7 +171,13 @@ def upload_replay_summary(
     if not settings.enabled:
         return None
 
-    tier = summary.get("workload_tier") or tier
+    summary = dict(summary)
+    summary.setdefault("workload_tier", tier)
+    bc = summary.get("benchmark_contract")
+    if isinstance(bc, dict):
+        bc = dict(bc)
+        bc.setdefault("workload_tier", tier)
+        summary["benchmark_contract"] = bc
     latest_obj = latest_replay_object(platform, settings, tier=tier)
     latest_uri = upload_json(summary, latest_obj, settings=settings)
 
@@ -189,9 +195,12 @@ def upload_replay_file(
     path: Path,
     *,
     settings: GcsSettings | None = None,
+    tier: str | None = None,
 ) -> str | None:
     summary = json.loads(path.read_text(encoding="utf-8"))
-    return upload_replay_summary(platform, summary, settings=settings)
+    if tier is None:
+        tier = path.parent.name if path.parent.name in workload_tier_ids() else "medium"
+    return upload_replay_summary(platform, summary, settings=settings, tier=tier)
 
 
 def upload_live_snapshot(
@@ -232,14 +241,35 @@ def upload_all_local(
     settings = settings or gcs_settings()
     uris: list[str] = []
     for platform in PLATFORMS:
-        replay_path = root / "results" / platform / "run_01_replay.json"
-        if replay_path.exists():
-            uri = upload_replay_file(platform, replay_path, settings=settings)
+        for tier in workload_tier_ids():
+            replay_path = root / "results" / platform / tier / "run_01_replay.json"
+            if replay_path.exists():
+                summary = json.loads(replay_path.read_text(encoding="utf-8"))
+                uri = upload_replay_summary(
+                    platform, summary, settings=settings, tier=tier,
+                )
+                if uri:
+                    uris.append(uri)
+        legacy = root / "results" / platform / "run_01_replay.json"
+        medium_path = root / "results" / platform / "medium" / "run_01_replay.json"
+        if legacy.exists() and not medium_path.exists():
+            summary = json.loads(legacy.read_text(encoding="utf-8"))
+            uri = upload_replay_summary(
+                platform, summary, settings=settings, tier="medium",
+            )
             if uri:
                 uris.append(uri)
-        live_path = root / "results" / platform / "live.json"
-        if live_path.exists():
-            payload = json.loads(live_path.read_text(encoding="utf-8"))
+        for tier in workload_tier_ids():
+            live_path = root / "results" / platform / tier / "live.json"
+            if live_path.exists():
+                payload = json.loads(live_path.read_text(encoding="utf-8"))
+                obj = f"{settings.prefix}/{tier}/{platform}/live.json"
+                uri = upload_json(payload, obj, settings=settings)
+                if uri:
+                    uris.append(uri)
+        legacy_live = root / "results" / platform / "live.json"
+        if legacy_live.exists():
+            payload = json.loads(legacy_live.read_text(encoding="utf-8"))
             uri = upload_live_snapshot(platform, payload, settings=settings)
             if uri:
                 uris.append(uri)
@@ -346,7 +376,6 @@ def try_upload_replay(
     if os.environ.get("GCS_UPLOAD", "1") not in ("1", "true", "yes"):
         return None
     try:
-        tier = summary.get("workload_tier") or tier
         uri = upload_replay_summary(platform, summary, settings=settings, tier=tier)
         print(f"Uploaded to {uri}")
         return uri
