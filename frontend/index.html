@@ -80,12 +80,28 @@
     .spec-card.tpu { border-top: 3px solid var(--tpu); }
     .spec-head {
       padding: 0.75rem 1rem;
-      border-bottom: 1px solid var(--border);
       font-size: 0.85rem;
       font-weight: 600;
+      list-style: none;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 0.5rem;
+      user-select: none;
     }
+    .spec-head::-webkit-details-marker { display: none; }
+    .spec-card[open] .spec-head { border-bottom: 1px solid var(--border); }
     .spec-head.gpu { color: var(--gpu); background: var(--gpu-light); }
     .spec-head.tpu { color: var(--tpu); background: var(--tpu-light); }
+    .spec-chevron {
+      font-size: 0.7rem;
+      opacity: 0.7;
+      transition: transform 0.15s ease;
+      flex-shrink: 0;
+    }
+    .spec-card[open] .spec-chevron { transform: rotate(90deg); }
+    .spec-body { background: var(--card); }
     .spec-row {
       display: flex;
       justify-content: space-between;
@@ -248,14 +264,20 @@
   <main>
     <div class="layout">
       <aside class="sidebar" id="sidebar">
-        <div class="spec-card gpu">
-          <div class="spec-head gpu">GPU node pool</div>
-          <div id="gpu-specs">Loading…</div>
-        </div>
-        <div class="spec-card tpu">
-          <div class="spec-head tpu">TPU node pool</div>
-          <div id="tpu-specs">Loading…</div>
-        </div>
+        <details class="spec-card gpu">
+          <summary class="spec-head gpu">
+            <span>GPU node pool</span>
+            <span class="spec-chevron" aria-hidden="true">▸</span>
+          </summary>
+          <div id="gpu-specs" class="spec-body">Loading…</div>
+        </details>
+        <details class="spec-card tpu">
+          <summary class="spec-head tpu">
+            <span>TPU node pool</span>
+            <span class="spec-chevron" aria-hidden="true">▸</span>
+          </summary>
+          <div id="tpu-specs" class="spec-body">Loading…</div>
+        </details>
       </aside>
       <div class="content">
         <div id="compare-bar" class="compare-bar">
