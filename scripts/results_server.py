@@ -28,6 +28,7 @@ from cost_metrics import compute_replay_cost_metrics
 from gcs_results import (
     GcsResultsStore,
     GcsSettings,
+    check_gcs_access,
     gcs_settings,
     latest_replay_object,
     manifest_tier_entry,
@@ -102,10 +103,17 @@ def _local_replay_mtime(platform: str, tier: str) -> float:
 
 
 class ResultsBackend:
-    def __init__(self, source: str, gcs: GcsResultsStore | None) -> None:
+    def __init__(
+        self,
+        source: str,
+        gcs: GcsResultsStore | None,
+        gcs_access: dict[str, Any] | None = None,
+    ) -> None:
         self.source = source
         self.gcs = gcs
+        self.gcs_access = gcs_access or {}
         self._tier_sources: dict[str, dict[str, str]] = {}
+        self._last_gcs_error: str | None = None
 
     @property
     def data_source(self) -> str:
@@ -123,11 +131,21 @@ class ResultsBackend:
     async def _gcs_read(self, fn):
         if not self.gcs or not self.gcs.enabled:
             return None
+        if self.gcs_access and not self.gcs_access.get("ok"):
+            return None
         try:
             return await asyncio.to_thread(fn)
         except Exception as exc:  # noqa: BLE001
-            print(f"WARNING: GCS read failed: {exc}", flush=True)
+            self._last_gcs_error = str(exc)
+            print(f"ERROR: GCS read failed: {exc}", flush=True)
             return None
+
+    def gcs_error_message(self) -> str | None:
+        if self.gcs_access and not self.gcs_access.get("ok"):
+            err = self.gcs_access.get("error") or "GCS not authenticated"
+            fix = self.gcs_access.get("fix") or ""
+            return f"{err}. Fix: {fix}" if fix else err
+        return self._last_gcs_error
 
     async def _load_local_replays(
         self, platform: str,
@@ -371,6 +389,8 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "gcs_bucket": settings.bucket if settings else None,
             "gcs_project": settings.project if settings else None,
             "gcs_prefix": settings.prefix if settings else None,
+            "gcs_access": backend.gcs_access,
+            "gcs_error": backend.gcs_error_message(),
             "manifest": manifest,
             "gcs_loaded": gcs_tiers,
             "tier_sources": {
@@ -423,6 +443,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "cost_metrics": cost_metrics,
             "has_replay": replay is not None,
             "is_running": is_running,
+            "gcs_error": backend.gcs_error_message() if not replay else None,
         }
         # Never substitute live.json summary for a missing tier — it caused identical metrics
         # across Simple/Medium/Complex when only one replay existed.
@@ -503,8 +524,17 @@ def main() -> None:
         project=args.gcs_project,
         prefix=args.gcs_prefix,
     )
-        gcs_store = GcsResultsStore(settings=settings, cache_ttl_s=0.0) if settings.enabled else None
-    backend = ResultsBackend(source=args.source, gcs=gcs_store)
+    gcs_store = GcsResultsStore(settings=settings, cache_ttl_s=0.0) if settings.enabled else None
+    gcs_access: dict[str, Any] = {}
+    if args.source in ("gcs", "auto") and gcs_store:
+        gcs_access = check_gcs_access(settings)
+        if gcs_access.get("ok"):
+            print(f"  GCS auth: OK (project={gcs_access.get('adc_project') or settings.project})")
+        else:
+            print("\n  *** GCS AUTH FAILED — UI will show no data ***")
+            print(f"  Error: {gcs_access.get('error')}")
+            print(f"  Fix:   {gcs_access.get('fix')}\n")
+    backend = ResultsBackend(source=args.source, gcs=gcs_store, gcs_access=gcs_access)
 
     print(f"Results UI: http://127.0.0.1:{args.port}/")
     print(f"  Results source: {args.source}")

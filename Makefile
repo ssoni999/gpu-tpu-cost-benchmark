@@ -1,4 +1,4 @@
-.PHONY: help install trace trace-all replay replay-all replay-live dashboard ui manifests migration-diff upload-results pull-gcs rebuild-gcs-manifest normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace trace-all replay replay-all replay-live dashboard ui setup-gcs manifests migration-diff upload-results pull-gcs rebuild-gcs-manifest normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
@@ -20,7 +20,7 @@ help:
 	@echo "  make replay-all TARGET=...   Replay all tiers on tpu + gpu (needs port-forward)"
 	@echo "  make replay TARGET=... PLATFORM=tpu TIER=medium"
 	@echo "  make ui                                 Results UI on port $(UI_PORT) (GCS default)"
-	@echo "  make pull-gcs                           Download all tier replays from GCS → results/"
+	@echo "  make setup-gcs                          ADC login for GCS reads (run once per session)"
 	@echo "  make rebuild-gcs-manifest               Write latest/manifest.json from bucket objects"
 	@echo "  make upload-results                     Push local results/*.json to GCS"
 	@echo "  make manifests                          Render tiny-model*.yaml from benchmark_config.yaml"
@@ -78,12 +78,22 @@ replay:
 		$(if $(DASHBOARD_URL),--dashboard-url $(DASHBOARD_URL),)
 
 ui:
-	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \
+	@if [ ! -f configs/gcs.env ]; then \
+		echo "NOTE: configs/gcs.env missing — creating from configs/gcs.env.example"; \
+		cp configs/gcs.env.example configs/gcs.env; \
+	fi
+	@set -a; . configs/gcs.env; set +a; \
 	fuser -k $(UI_PORT)/tcp 2>/dev/null || true; \
 	PYTHONPATH=scripts python3 scripts/results_server.py --port $(UI_PORT) \
 		--source $(RESULTS_SOURCE) \
 		$(if $(GCS_BUCKET),--gcs-bucket $(GCS_BUCKET),) \
 		$(if $(GCS_PROJECT),--gcs-project $(GCS_PROJECT),)
+
+setup-gcs:
+	@if [ ! -f configs/gcs.env ]; then cp configs/gcs.env.example configs/gcs.env; fi
+	@echo "Run this once per Cloud Shell session (or when ADC expires):"
+	@echo "  gcloud auth application-default login --project=gpu-tpu-benchmark-results"
+	@gcloud auth application-default login --project=gpu-tpu-benchmark-results
 
 upload-results:
 	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \

@@ -559,6 +559,44 @@ class GcsResultsStore:
         return self._cached("manifest", _load) or {}
 
 
+def check_gcs_access(settings: GcsSettings | None = None) -> dict[str, Any]:
+    """Verify Application Default Credentials and bucket read access."""
+    settings = settings or gcs_settings()
+    out: dict[str, Any] = {
+        "ok": False,
+        "bucket": settings.bucket,
+        "project": settings.project,
+        "prefix": settings.prefix,
+        "adc_project": None,
+        "error": None,
+        "fix": (
+            "gcloud auth application-default login "
+            f"--project={settings.project or DEFAULT_PROJECT}"
+        ),
+    }
+    try:
+        import google.auth
+
+        credentials, adc_project = google.auth.default()
+        out["adc_project"] = adc_project
+        if credentials is None:
+            out["error"] = "No Application Default Credentials found"
+            return out
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)
+        return out
+
+    try:
+        bucket = _bucket(settings)
+        # Probe read access using a tier path that should exist after replays.
+        probe = bucket.blob(latest_replay_object("tpu", settings, tier="medium"))
+        probe.exists()
+        out["ok"] = True
+    except Exception as exc:  # noqa: BLE001
+        out["error"] = str(exc)
+    return out
+
+
 def try_upload_replay(
     platform: str,
     summary: dict[str, Any],
