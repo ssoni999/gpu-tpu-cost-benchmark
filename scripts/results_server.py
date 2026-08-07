@@ -141,6 +141,9 @@ def build_app(backend: ResultsBackend) -> web.Application:
             payload["has_replay"] = True
         return web.json_response(payload)
 
+    async def handle_hardware(_request: web.Request) -> web.Response:
+        return web.json_response(node_pool_specs(load_config()))
+
     async def handle_migration(_request: web.Request) -> web.Response:
         cfg = load_config()
         return web.json_response({
@@ -167,6 +170,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/status", handle_status)
     app.router.add_get("/api/results/{platform}", handle_results)
+    app.router.add_get("/api/hardware", handle_hardware)
     app.router.add_get("/api/migration", handle_migration)
     app.router.add_get("/api/compare", handle_compare)
     return app
