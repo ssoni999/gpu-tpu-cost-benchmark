@@ -28,6 +28,17 @@ gpu:
   machine_type: n1-standard-4
   power_watts: 70
   framework: vllm
+  peak_tflops: 65
+  node_pool:
+    name: gpu-pool
+    node_count: 1
+    machine_type: n1-standard-4
+    vcpu: 4
+    system_memory_gib: 15
+    accelerator_memory_gib: 16
+    power_watts: 70
+    interconnect: PCIe 3.0 x16
+    network_gbps: 32
   docker_image: vllm/vllm-openai:latest
   recipe_ref: ../gpu-recipes/inference/g4/single-host-serving/vllm/README.md
   k8s:
@@ -69,6 +80,18 @@ tpu:
   runtime_version: v2-alpha-tpuv5-lite
   power_watts: 200
   framework: vllm
+  peak_tflops: 197
+  node_pool:
+    name: tpu-v5-lite-podslice
+    node_count: 1
+    machine_type: v5e-1x1 (CT5LP)
+    vcpu: 24
+    system_memory_gib: 48
+    accelerator_memory_gib: 16
+    power_watts: 200
+    topology: 1x1
+    interconnect: ICI (400 Gbps/chip)
+    network_gbps: 100
   docker_image: vllm/vllm-tpu:latest
   # Official tpu-recipes Qwen3 guide targets v6e; this project pins v5e (see README).
   recipe_ref: ../tpu-recipes/inference/trillium/vLLM/Qwen3/README.md

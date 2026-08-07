@@ -112,6 +112,42 @@ def migration_diff(cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     return rows
 
 
+def node_pool_specs(cfg: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Hardware / node-pool breakdown for the results UI sidebar."""
+    cfg = cfg or load_config()
+    pricing = cfg.get("pricing", {})
+    out: dict[str, Any] = {}
+    for platform in ("gpu", "tpu"):
+        block = platform_block(cfg, platform)
+        pool = block.get("node_pool", {})
+        accel_hourly = pricing.get(f"{platform}_accelerator_hourly_usd")
+        vm_hourly = pricing.get(f"{platform}_vm_hourly_usd", 0.0)
+        hourly = None
+        if accel_hourly is not None:
+            hourly = float(accel_hourly) + float(vm_hourly or 0)
+        power = pool.get("power_watts") or block.get("power_watts") or pricing.get(f"{platform}_tdp_watts")
+        out[platform] = {
+            "platform": platform,
+            "label": "GPU" if platform == "gpu" else "TPU",
+            "node_pool_name": pool.get("name"),
+            "node_count": pool.get("node_count", 1),
+            "accelerator": block.get("accelerator"),
+            "accelerator_count": block.get("accelerator_count", 1),
+            "generation": block.get("generation"),
+            "machine_type": pool.get("machine_type") or block.get("machine_type"),
+            "vcpu": pool.get("vcpu"),
+            "system_memory_gib": pool.get("system_memory_gib"),
+            "accelerator_memory_gib": pool.get("accelerator_memory_gib"),
+            "peak_tflops": block.get("peak_tflops"),
+            "power_watts": power,
+            "interconnect": pool.get("interconnect") or pool.get("topology"),
+            "network_gbps": pool.get("network_gbps"),
+            "hourly_cost_usd": hourly,
+            "runtime_version": block.get("runtime_version"),
+        }
+    return out
+
+
 def bench_cli_args(config: dict[str, Any] | None = None) -> list[str]:
     """vllm bench serve flags derived from benchmark_config.yaml."""
     cfg = config or load_config()

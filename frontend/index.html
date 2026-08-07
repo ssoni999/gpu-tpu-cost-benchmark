@@ -11,8 +11,11 @@
       --border: #dfe3ea;
       --text: #1a1d24;
       --muted: #5c6578;
-      --tpu: #1a73e8;
-      --gpu: #34a853;
+      --gpu: #d93025;
+      --gpu-light: #fce8e6;
+      --tpu: #137333;
+      --tpu-light: #e6f4ea;
+      --win: #137333;
       --accent: #174ea6;
     }
     * { box-sizing: border-box; }
@@ -55,7 +58,45 @@
     }
     .pill.running { background: #fef7e0; color: #b06000; }
     .pill.missing { background: #fce8e6; color: #c5221f; }
-    main { max-width: 1100px; margin: 0 auto; padding: 1.25rem 1.5rem 2.5rem; }
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      gap: 1.25rem;
+      align-items: start;
+    }
+    @media (max-width: 960px) {
+      .layout { grid-template-columns: 1fr; }
+    }
+    main { max-width: 1400px; margin: 0 auto; padding: 1.25rem 1.5rem 2.5rem; }
+    .sidebar { display: flex; flex-direction: column; gap: 1rem; }
+    .spec-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .spec-card.gpu { border-top: 3px solid var(--gpu); }
+    .spec-card.tpu { border-top: 3px solid var(--tpu); }
+    .spec-head {
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.85rem;
+      font-weight: 600;
+    }
+    .spec-head.gpu { color: var(--gpu); background: var(--gpu-light); }
+    .spec-head.tpu { color: var(--tpu); background: var(--tpu-light); }
+    .spec-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.45rem 1rem;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.78rem;
+    }
+    .spec-row:last-child { border-bottom: none; }
+    .spec-row .k { color: var(--muted); }
+    .spec-row .v { font-weight: 600; text-align: right; }
+    .content { min-width: 0; }
     .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
     @media (max-width: 800px) { .panels { grid-template-columns: 1fr; } }
     .panel {
@@ -64,6 +105,8 @@
       border-radius: 10px;
       overflow: hidden;
     }
+    .panel.gpu { border-top: 3px solid var(--gpu); }
+    .panel.tpu { border-top: 3px solid var(--tpu); }
     .panel-head {
       padding: 0.85rem 1rem;
       border-bottom: 1px solid var(--border);
@@ -74,6 +117,8 @@
     .panel-head h2 { margin: 0; font-size: 0.95rem; }
     .panel-head.tpu h2 { color: var(--tpu); }
     .panel-head.gpu h2 { color: var(--gpu); }
+    .hero.gpu .big { color: var(--gpu); }
+    .hero.tpu .big { color: var(--tpu); }
     .hero {
       padding: 1rem;
       text-align: center;
@@ -94,14 +139,12 @@
     .metric:nth-child(2n) { border-right: none; }
     .metric .k { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
     .metric .v { font-size: 1.05rem; font-weight: 600; margin-top: 0.15rem; }
-    .metric.win .v {
-      color: #137333;
-    }
+    .metric.win .v { color: var(--win); }
     .metric.win .indicator {
       display: inline-block;
       margin-left: 0.25rem;
       font-size: 0.85rem;
-      color: #137333;
+      color: var(--win);
       font-weight: 700;
     }
     .metric-section {
@@ -200,15 +243,25 @@
   </header>
 
   <main>
-    <div id="migration-bar" class="migration-bar">
-      <h3>Migration — GPU vs TPU parameters (from benchmark_config.yaml)</h3>
-      <div id="migration-rows">Loading…</div>
+    <div class="layout">
+      <aside class="sidebar" id="sidebar">
+        <div class="spec-card gpu">
+          <div class="spec-head gpu">GPU node pool</div>
+          <div id="gpu-specs">Loading…</div>
+        </div>
+        <div class="spec-card tpu">
+          <div class="spec-head tpu">TPU node pool</div>
+          <div id="tpu-specs">Loading…</div>
+        </div>
+      </aside>
+      <div class="content">
+        <div id="compare-bar" class="compare-bar">
+          <h3 style="margin:0 0 0.5rem;font-size:0.85rem">Head-to-head (same trace)</h3>
+          <div id="compare-rows"></div>
+        </div>
+        <div class="panels" id="panels"></div>
+      </div>
     </div>
-    <div id="compare-bar" class="compare-bar">
-      <h3 style="margin:0 0 0.5rem;font-size:0.85rem">TPU vs GPU (same trace)</h3>
-      <div id="compare-rows"></div>
-    </div>
-    <div class="panels" id="panels"></div>
     <footer>
       Server port <strong>8787</strong>. Data from GCS <code>latest/</code> or local <code>results/</code>.
       <span id="data-source">Source: loading…</span>
@@ -265,9 +318,46 @@
       return false;
     }
 
+    function platformWins(platform, key, myVal, otherVal) {
+      if (otherVal === undefined || otherVal === null) return false;
+      const na = Number(myVal), nb = Number(otherVal);
+      if (Number.isNaN(na) || Number.isNaN(nb) || na === nb) return false;
+      if (platform === 'tpu') return tpuBeatsGpu(key, myVal, otherVal);
+      return tpuBeatsGpu(key, otherVal, myVal);
+    }
+
     function cmpWin(platform, key, myVal, otherVal) {
-      if (platform !== 'tpu' || otherVal === undefined || otherVal === null) return false;
-      return tpuBeatsGpu(key, myVal, otherVal);
+      return platformWins(platform, key, myVal, otherVal);
+    }
+
+    function specRow(k, v, unit = '') {
+      const display = v === undefined || v === null || v === '' ? '—' : v;
+      return `<div class="spec-row"><span class="k">${k}</span><span class="v">${display}${unit && display !== '—' ? ' ' + unit : ''}</span></div>`;
+    }
+
+    function renderHardwareSpecs(hardware) {
+      const render = (platform, elId) => {
+        const h = hardware?.[platform];
+        const el = document.getElementById(elId);
+        if (!h) { el.textContent = 'No config'; return; }
+        el.innerHTML = [
+          specRow('Pool name', h.node_pool_name),
+          specRow('Nodes', h.node_count),
+          specRow('Accelerator', h.accelerator),
+          specRow('Chips / node', h.accelerator_count),
+          specRow('Machine type', h.machine_type),
+          specRow('vCPU', h.vcpu),
+          specRow('System memory', h.system_memory_gib, 'GiB'),
+          specRow('Accel memory', h.accelerator_memory_gib, 'GiB'),
+          specRow('Peak compute', h.peak_tflops, 'TFLOPS'),
+          specRow('Power (TDP)', h.power_watts, 'W'),
+          specRow('Interconnect', h.interconnect),
+          specRow('Network', h.network_gbps, 'Gbps'),
+          specRow('Hourly cost', h.hourly_cost_usd != null ? '$' + Number(h.hourly_cost_usd).toFixed(2) : null),
+        ].join('');
+      };
+      render('gpu', 'gpu-specs');
+      render('tpu', 'tpu-specs');
     }
 
     function renderServingBlock(r) {
@@ -285,32 +375,6 @@
         </div>`;
     }
 
-    function renderMigration(diff) {
-      const el = document.getElementById('migration-rows');
-      if (!diff?.length) {
-        el.textContent = 'No migration data';
-        return;
-      }
-      const rows = diff.filter(d => !d.same).slice(0, 12);
-      if (!rows.length) {
-        el.innerHTML = '<p style="margin:0;font-size:0.85rem;color:var(--muted)">All tracked params match (workload is shared).</p>';
-        return;
-      }
-      el.innerHTML = `
-        <table class="migration-table">
-          <thead><tr><th>Category</th><th>Parameter</th><th>GPU</th><th>TPU</th></tr></thead>
-          <tbody>
-            ${rows.map(d => `
-              <tr class="diff">
-                <td>${d.category}</td>
-                <td>${d.key}</td>
-                <td><code>${typeof d.gpu === 'object' ? JSON.stringify(d.gpu) : d.gpu ?? '—'}</code></td>
-                <td><code>${typeof d.tpu === 'object' ? JSON.stringify(d.tpu) : d.tpu ?? '—'}</code></td>
-              </tr>`).join('')}
-          </tbody>
-        </table>`;
-    }
-
     function renderPanel(platform, data, otherData) {
       const r = data.replay;
       const other = otherData?.replay;
@@ -325,7 +389,7 @@
           ? 'Replay in progress… (reading live.json)'
           : `No results yet. Run:<br><code>make replay TARGET=http://127.0.0.1:8000 PLATFORM=${platform} MODEL='…'</code>`;
         return `
-          <div class="panel">
+          <div class="panel ${headClass}">
             <div class="panel-head ${headClass}"><h2>${label}</h2><span class="pill ${status}">${status}</span></div>
             <div class="empty">${msg}</div>
           </div>`;
@@ -353,13 +417,13 @@
       })();
 
       return `
-        <div class="panel">
+        <div class="panel ${headClass}">
           <div class="panel-head ${headClass}">
             <h2>${label}</h2>
             <span class="pill ${status}">${status}</span>
           </div>
           ${errBlock}
-          <div class="hero">
+          <div class="hero ${headClass}">
             <div class="big">${fmt(r.output_tokens_per_second, 1)}${cmpWin(platform, 'output_tokens_per_second', r.output_tokens_per_second, other?.output_tokens_per_second) ? ' <span class="indicator">↑</span>' : ''}</div>
             <div class="label">output tokens / sec</div>
           </div>
@@ -408,10 +472,10 @@
         compareBar.classList.remove('visible');
         return;
       }
-      const a = tpu.replay;
-      const b = gpu.replay;
-      const ca = tpu.cost_metrics || a?.cost_metrics || {};
-      const cb = gpu.cost_metrics || b?.cost_metrics || {};
+      const a = gpu.replay;
+      const b = tpu.replay;
+      const ca = gpu.cost_metrics || a?.cost_metrics || {};
+      const cb = tpu.cost_metrics || b?.cost_metrics || {};
       const rows = [
         ['Output tok/s', a.output_tokens_per_second, b.output_tokens_per_second, true],
         ['TTFT p95 (ms)', a.ttft_ms?.p95, b.ttft_ms?.p95, false],
@@ -420,21 +484,20 @@
         ['Wall time (s)', a.wall_time_s, b.wall_time_s, false],
         ['Run cost ($)', ca.run_cost_usd, cb.run_cost_usd, false],
         ['Cost / output token', ca.cost_per_output_token_usd, cb.cost_per_output_token_usd, false],
-        ['Cost / wall second', ca.cost_per_wall_second_usd, cb.cost_per_wall_second_usd, false],
         ['Perf / watt (tok/s/W)', ca.performance_per_watt_tok_s, cb.performance_per_watt_tok_s, true],
         ['Perf / $ (tok/s/$)', ca.performance_per_dollar_tok_s, cb.performance_per_dollar_tok_s, true],
       ];
-      compareRows.innerHTML = rows.map(([label, va, vb, higherBetter]) => {
-        const na = Number(va), nb = Number(vb);
+      compareRows.innerHTML = rows.map(([label, gpuVal, tpuVal, higherBetter]) => {
+        const ng = Number(gpuVal), nt = Number(tpuVal);
         let win = '—';
         let winCls = '';
-        if (!Number.isNaN(na) && !Number.isNaN(nb) && na !== nb) {
-          const tpuWins = higherBetter ? na > nb : na < nb;
-          win = tpuWins ? '↑ TPU' : 'GPU';
-          winCls = tpuWins ? 'tpu-win' : 'gpu-win';
+        if (!Number.isNaN(ng) && !Number.isNaN(nt) && ng !== nt) {
+          const gpuWins = higherBetter ? ng > nt : ng < nt;
+          win = gpuWins ? '↑ GPU' : '↑ TPU';
+          winCls = gpuWins ? 'gpu-win' : 'tpu-win';
         }
         const fmtVal = (v) => label.includes('$') || label.includes('Cost') ? fmtUsd(v, 6) : fmt(v);
-        return `<div class="compare-row"><span>${label}</span><span>TPU ${fmtVal(va)} · GPU ${fmtVal(vb)} <span class="winner ${winCls}">${win !== '—' ? win : ''}</span></span></div>`;
+        return `<div class="compare-row"><span>${label}</span><span><span style="color:var(--gpu)">GPU ${fmtVal(gpuVal)}</span> · <span style="color:var(--tpu)">TPU ${fmtVal(tpuVal)}</span> <span class="winner ${winCls}">${win !== '—' ? win : ''}</span></span></div>`;
       }).join('');
       compareBar.classList.add('visible');
     }
@@ -447,9 +510,9 @@
           fetch('/api/migration').then(r => r.json()),
           fetch('/api/status').then(r => r.json()),
         ]);
-        panelsEl.innerHTML = renderPanel('tpu', tpuRes, gpuRes) + renderPanel('gpu', gpuRes, tpuRes);
+        panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
         renderCompare(tpuRes, gpuRes);
-        renderMigration(migRes.diff);
+        renderHardwareSpecs(migRes.hardware);
         const src = statusRes.data_source || 'local';
         const bucket = statusRes.gcs_bucket ? `gs://${statusRes.gcs_bucket}/${statusRes.gcs_prefix || 'latest'}` : '';
         const manifestAt = statusRes.manifest?.updated_at;

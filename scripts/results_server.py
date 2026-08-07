@@ -11,7 +11,7 @@ from typing import Any
 
 from aiohttp import web
 
-from config import load_config, migration_diff, platform_metadata
+from config import load_config, migration_diff, node_pool_specs, platform_metadata
 from cost_metrics import compute_replay_cost_metrics
 from gcs_results import GcsResultsStore, GcsSettings, gcs_settings, latest_replay_object
 
@@ -148,6 +148,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "benchmark": cfg["benchmark"],
             "gpu": platform_metadata(cfg, "gpu"),
             "tpu": platform_metadata(cfg, "tpu"),
+            "hardware": node_pool_specs(cfg),
             "diff": migration_diff(cfg),
         })
 
