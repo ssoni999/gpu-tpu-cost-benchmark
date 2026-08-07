@@ -153,10 +153,11 @@ class ResultsBackend:
             path = replay_paths.get(tier) or str(replay_result_path(platform, tier).relative_to(ROOT))
             return replay, path, False, tier
 
+        # Project from nearest measured tier when this tier has not been replayed yet.
         if allow_projection and replays:
             replay, source_tier, projected = resolve_tier_replay(replays, tier, platform, cfg)
             if replay is not None:
-                path = f"(projected from {source_tier})"
+                path = f"(projected from {source_tier})" if projected else replay_paths.get(tier, "")
                 return replay, path, projected, tier
 
         return None, str(replay_result_path(platform, tier).relative_to(ROOT)), False, tier
@@ -253,7 +254,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
         backend: ResultsBackend = request.app["backend"]
         tier = request.rel_url.query.get("workload") or request.rel_url.query.get("tier")
 
-        allow_projection = request.rel_url.query.get("project") in ("1", "true", "yes")
+        allow_projection = request.rel_url.query.get("project") not in ("0", "false", "no")
         replay, replay_path, projected, resolved_tier = await backend.get_replay(
             platform, tier, allow_projection=allow_projection,
         )

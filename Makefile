@@ -1,4 +1,4 @@
-.PHONY: help install trace trace-all replay replay-live dashboard ui manifests migration-diff upload-results normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace trace-all replay replay-all replay-live dashboard ui manifests migration-diff upload-results normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
@@ -17,6 +17,7 @@ help:
 	@echo "  make install              Python dependencies"
 	@echo "  make trace TIER=medium       JSONL workload for tier (small|medium|high)"
 	@echo "  make trace-all               Generate traces for all tiers"
+	@echo "  make replay-all TARGET=...   Replay all tiers on tpu + gpu (needs port-forward)"
 	@echo "  make replay TARGET=... PLATFORM=tpu TIER=medium"
 	@echo "  make ui                                 Results UI on port $(UI_PORT) (GCS or local)"
 	@echo "  make upload-results                     Push local results/*.json to GCS"
@@ -45,6 +46,15 @@ trace-all:
 	@for t in small medium high; do \
 		echo "=== trace $$t ==="; \
 		$(MAKE) trace TIER=$$t TRACE=workload/$$t/prompts.jsonl || exit 1; \
+	done
+
+replay-all:
+	@test -n "$(TARGET)" || (echo "TARGET is required, e.g. TARGET=http://127.0.0.1:8000" && exit 1)
+	@for p in tpu gpu; do \
+		for t in small medium high; do \
+			echo "=== replay $$p/$$t ==="; \
+			$(MAKE) replay TARGET=$(TARGET) PLATFORM=$$p TIER=$$t MODEL='$(MODEL)' || exit 1; \
+		done; \
 	done
 
 replay:

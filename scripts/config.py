@@ -51,22 +51,45 @@ def workload_profile(cfg: dict[str, Any] | None, tier: str) -> dict[str, Any]:
     return base
 
 
+def _trace_implies_tier(trace: str, cfg: dict[str, Any] | None = None) -> str | None:
+    """Infer workload tier from trace path (workload/small/prompts.jsonl, etc.)."""
+    cfg = cfg or load_config()
+    if not trace:
+        return None
+    for tier_id in workload_tier_ids(cfg):
+        if f"workload/{tier_id}/" in trace:
+            return tier_id
+    if "workload/prompts.jsonl" in trace:
+        return "medium"
+    return None
+
+
 def replay_matches_tier(replay: dict[str, Any], tier: str, cfg: dict[str, Any] | None = None) -> bool:
     """True when replay was measured for this workload tier (not a duplicate/stale file)."""
     cfg = cfg or load_config()
     if tier not in workload_tier_ids(cfg):
         return False
+
     bc = replay.get("benchmark_contract") or {}
-    embedded = bc.get("workload_tier") or replay.get("workload_tier")
-    if embedded in workload_tier_ids(cfg):
-        return embedded == tier
     profile = workload_profile(cfg, tier)
     expected = int(profile.get("num_prompts") or 0)
     actual = bc.get("num_requests")
     if actual is None:
         actual = int(replay.get("successful_requests") or 0) + int(replay.get("failed_requests") or 0)
-    if expected and actual:
-        return actual == expected
+
+    # Prompt count is the ground truth — ignore workload_tier tags on duplicate uploads.
+    if expected and actual and actual != expected:
+        return False
+
+    trace = str(bc.get("trace") or replay.get("trace") or "")
+    trace_tier = _trace_implies_tier(trace, cfg)
+    if trace_tier is not None and trace_tier != tier:
+        return False
+
+    embedded = bc.get("workload_tier") or replay.get("workload_tier")
+    if embedded in workload_tier_ids(cfg):
+        return embedded == tier
+
     return tier == default_workload(cfg)
 
 

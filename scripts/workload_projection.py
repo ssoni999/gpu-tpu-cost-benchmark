@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from config import load_config, workload_profile, workload_tier_ids
+from config import load_config, replay_matches_tier, workload_profile, workload_tier_ids
 from cost_metrics import compute_replay_cost_metrics
 
 
@@ -135,7 +135,9 @@ def resolve_tier_replay(
 ) -> tuple[dict[str, Any] | None, str, bool]:
     """Pick measured replay or project from nearest available tier."""
     cfg = cfg or load_config()
-    if target_tier in replays_by_tier:
+    if target_tier in replays_by_tier and replay_matches_tier(
+        replays_by_tier[target_tier], target_tier, cfg,
+    ):
         replay = copy.deepcopy(replays_by_tier[target_tier])
         replay["workload_tier"] = target_tier
         replay["projected"] = False

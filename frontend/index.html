@@ -1012,7 +1012,7 @@
       const requestedTier = data.requested_tier || currentWorkload;
       const tierMismatch = measuredTier && requestedTier && measuredTier !== requestedTier;
       const projectedBadge = data.projected
-        ? '<span class="projected-badge" title="Scaled from measured replay">Projected</span>'
+        ? `<span class="projected-badge" title="Estimated from ${r?.projected_from_tier || 'measured'} replay — run make replay TIER=${requestedTier} for real numbers">Projected · ${tierLabel}</span>`
         : tierMismatch
           ? `<span class="projected-badge" style="background:rgba(251,191,36,0.12);color:#fbbf24;border-color:rgba(251,191,36,0.25)" title="Replay tier ${measuredTier} ≠ requested ${requestedTier}">Tier mismatch</span>`
           : `<span class="projected-badge" style="background:rgba(74,222,128,0.12);color:var(--tpu-bright);border-color:rgba(74,222,128,0.25)" title="${data.replay_path || ''}">Measured · ${tierLabel}</span>`;
