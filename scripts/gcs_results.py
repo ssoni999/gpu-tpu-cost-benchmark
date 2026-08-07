@@ -85,6 +85,27 @@ def download_json(object_name: str, settings: GcsSettings | None = None) -> dict
     return json.loads(blob.download_as_text(encoding="utf-8"))
 
 
+def blob_updated_epoch(object_name: str, settings: GcsSettings | None = None) -> float:
+    """Unix timestamp from GCS object updated time, or 0."""
+    settings = settings or gcs_settings()
+    try:
+        blob = _bucket(settings).blob(object_name)
+        if not blob.exists():
+            return 0.0
+        blob.reload()
+        if blob.updated:
+            return blob.updated.timestamp()
+    except Exception:  # noqa: BLE001
+        return 0.0
+    return 0.0
+
+
+def object_implies_tier(object_name: str, tier: str, settings: GcsSettings) -> bool:
+    """True when object path is tier-specific (latest/small/tpu/...), not legacy flat layout."""
+    prefix = f"{settings.prefix}/{tier}/"
+    return object_name.startswith(prefix)
+
+
 def latest_replay_object(
     platform: str,
     settings: GcsSettings | None = None,
@@ -328,6 +349,69 @@ def upload_all_local(
     return uris
 
 
+def rebuild_manifest_from_bucket(settings: GcsSettings | None = None) -> dict[str, Any]:
+    """Scan known GCS paths and write latest/manifest.json (fixes missing manifest)."""
+    from config import replay_matches_tier
+
+    settings = settings or gcs_settings()
+    manifest: dict[str, Any] = {
+        "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "platforms": {},
+    }
+    for platform in PLATFORMS:
+        manifest["platforms"].setdefault(platform, {"tiers": {}})
+        for tier in workload_tier_ids():
+            for obj in manifest_replay_candidates({}, platform, tier, settings):
+                summary = download_json(obj, settings=settings)
+                if summary is None:
+                    continue
+                trusted = object_implies_tier(obj, tier, settings)
+                if not trusted and not replay_matches_tier(summary, tier):
+                    continue
+                uri = f"gs://{settings.bucket}/{obj}"
+                ts = blob_updated_epoch(obj, settings)
+                uploaded_at = (
+                    datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    if ts
+                    else manifest["updated_at"]
+                )
+                manifest["platforms"][platform]["tiers"][tier] = {
+                    "latest_uri": uri,
+                    "uploaded_at": uploaded_at,
+                    "successful_requests": summary.get("successful_requests"),
+                    "failed_requests": summary.get("failed_requests"),
+                    "output_tokens_per_second": summary.get("output_tokens_per_second"),
+                    "model": summary.get("model"),
+                    "workload_tier": tier,
+                }
+                break
+    upload_json(manifest, manifest_object(settings), settings=settings)
+    return manifest
+
+
+def pull_all_replays(root: Path, settings: GcsSettings | None = None) -> list[str]:
+    """Download all tier replays from GCS into results/{platform}/{tier}/."""
+    from config import replay_matches_tier, replay_result_path
+
+    settings = settings or gcs_settings()
+    written: list[str] = []
+    for platform in PLATFORMS:
+        for tier in workload_tier_ids():
+            for obj in manifest_replay_candidates({}, platform, tier, settings):
+                summary = download_json(obj, settings=settings)
+                if summary is None:
+                    continue
+                trusted = object_implies_tier(obj, tier, settings)
+                if not trusted and not replay_matches_tier(summary, tier):
+                    continue
+                out = replay_result_path(platform, tier, root=root)
+                out.parent.mkdir(parents=True, exist_ok=True)
+                out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+                written.append(str(out.relative_to(root)))
+                break
+    return written
+
+
 class GcsResultsStore:
     """Read-through cache for UI/API."""
 
@@ -353,22 +437,29 @@ class GcsResultsStore:
         self._cache[key] = (now, value)
         return value
 
-    def read_replay(self, platform: str, tier: str = "medium") -> dict[str, Any] | None:
+    def read_replay_object(
+        self, platform: str, tier: str = "medium",
+    ) -> tuple[dict[str, Any] | None, str | None]:
+        """Return (replay JSON, object key) from first matching GCS object."""
         if not self.enabled:
-            return None
+            return None, None
 
-        def _load() -> dict[str, Any] | None:
+        def _load() -> tuple[dict[str, Any] | None, str | None]:
             manifest = read_manifest(self.settings)
             for obj in manifest_replay_candidates(manifest, platform, tier, self.settings):
                 data = download_json(obj, settings=self.settings)
                 if data is not None:
-                    return data
-            return None
+                    return data, obj
+            return None, None
 
-        return self._cached(f"replay:{platform}:{tier}", _load)
+        return self._cached(f"replay_obj:{platform}:{tier}", _load)
+
+    def read_replay(self, platform: str, tier: str = "medium") -> dict[str, Any] | None:
+        replay, _obj = self.read_replay_object(platform, tier)
+        return replay
 
     def tier_upload_epoch(self, platform: str, tier: str) -> float:
-        """Unix timestamp from manifest uploaded_at, or 0 if unknown."""
+        """Unix timestamp from manifest or GCS blob updated time."""
         if not self.enabled:
             return 0.0
 
@@ -376,15 +467,59 @@ class GcsResultsStore:
             manifest = read_manifest(self.settings)
             entry = manifest_tier_entry(manifest, platform, tier)
             uploaded = entry.get("uploaded_at")
-            if not uploaded:
-                return 0.0
-            try:
-                dt = datetime.fromisoformat(str(uploaded).replace("Z", "+00:00"))
-                return dt.timestamp()
-            except ValueError:
-                return 0.0
+            if uploaded:
+                try:
+                    dt = datetime.fromisoformat(str(uploaded).replace("Z", "+00:00"))
+                    return dt.timestamp()
+                except ValueError:
+                    pass
+            best = 0.0
+            for obj in manifest_replay_candidates(manifest, platform, tier, self.settings):
+                best = max(best, blob_updated_epoch(obj, self.settings))
+            return best
 
         return float(self._cached(f"tier_ts:{platform}:{tier}", _load) or 0.0)
+
+    def inspect_tier(self, platform: str, tier: str) -> dict[str, Any]:
+        """Diagnostic: which GCS objects exist and whether they'd be loaded."""
+        from config import replay_matches_tier, workload_profile, load_config
+
+        cfg = load_config()
+        expected = int(workload_profile(cfg, tier).get("num_prompts") or 0)
+        manifest = read_manifest(self.settings)
+        objects: list[dict[str, Any]] = []
+        chosen: str | None = None
+        for obj in manifest_replay_candidates(manifest, platform, tier, self.settings):
+            row: dict[str, Any] = {"object": obj, "exists": False}
+            try:
+                blob = _bucket(self.settings).blob(obj)
+                row["exists"] = blob.exists()
+                if row["exists"]:
+                    blob.reload()
+                    row["updated"] = blob.updated.isoformat() if blob.updated else None
+                    data = download_json(obj, settings=self.settings)
+                    if data:
+                        actual = int(data.get("successful_requests") or 0) + int(
+                            data.get("failed_requests") or 0
+                        )
+                        trusted = object_implies_tier(obj, tier, self.settings)
+                        matches = trusted or replay_matches_tier(data, tier, cfg)
+                        row["requests"] = actual
+                        row["expected_requests"] = expected
+                        row["trusted_path"] = trusted
+                        row["matches_tier"] = matches
+                        row["output_tokens_per_second"] = data.get("output_tokens_per_second")
+                        if matches and chosen is None:
+                            chosen = obj
+            except Exception as exc:  # noqa: BLE001
+                row["error"] = str(exc)
+            objects.append(row)
+        return {
+            "platform": platform,
+            "tier": tier,
+            "chosen_object": chosen,
+            "candidates": objects,
+        }
 
     def read_live(self, platform: str, tier: str = "medium") -> dict[str, Any] | None:
         if not self.enabled:

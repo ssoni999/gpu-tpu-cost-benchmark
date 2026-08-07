@@ -70,14 +70,34 @@ make upload-results PLATFORM=tpu # one platform
 ## UI from GCS
 
 ```bash
+cp configs/gcs.env.example configs/gcs.env   # if not done yet
 source configs/gcs.env
 make ui
 # Web Preview → port 8787
 ```
 
-The UI uses `--source auto` (default): merges GCS + local `results/`, picking the **newest per tier** (GCS wins ties).
+Default is **`RESULTS_SOURCE=gcs`** — UI reads directly from the bucket.
 
-Force GCS-only (recommended when bucket is source of truth):
+If `manifest.json` is missing (common for older uploads), rebuild it once:
+
+```bash
+make rebuild-gcs-manifest
+```
+
+Or pull all replays locally **and** rebuild manifest:
+
+```bash
+make pull-gcs
+make ui RESULTS_SOURCE=local   # optional: serve from downloaded results/
+```
+
+Debug what GCS objects the UI can see:
+
+```bash
+curl -s http://127.0.0.1:8787/api/gcs/inspect | python3 -m json.tool
+```
+
+The UI uses `--source gcs` by default. To merge with local files:
 
 ```bash
 make ui RESULTS_SOURCE=gcs

@@ -31,6 +31,7 @@ from gcs_results import (
     gcs_settings,
     latest_replay_object,
     manifest_tier_entry,
+    object_implies_tier,
 )
 from workload_projection import resolve_tier_replay
 
@@ -110,10 +111,14 @@ class ResultsBackend:
     def tier_sources(self, platform: str) -> dict[str, str]:
         return dict(self._tier_sources.get(platform, {}))
 
-    async def _gcs_read(self, fn) -> dict[str, Any] | None:
+    async def _gcs_read(self, fn):
         if not self.gcs or not self.gcs.enabled:
             return None
-        return await asyncio.to_thread(fn)
+        try:
+            return await asyncio.to_thread(fn)
+        except Exception as exc:  # noqa: BLE001
+            print(f"WARNING: GCS read failed: {exc}", flush=True)
+            return None
 
     async def _load_local_replays(
         self, platform: str,
@@ -137,18 +142,21 @@ class ResultsBackend:
         manifest = await self._gcs_read(self.gcs.read_manifest) or {}  # type: ignore[union-attr]
         settings = self.gcs.settings
         for tier in workload_tier_ids():
-            replay = await self._gcs_read(
-                lambda p=platform, t=tier: self.gcs.read_replay(p, t)  # type: ignore[union-attr]
+            result = await self._gcs_read(
+                lambda p=platform, t=tier: self.gcs.read_replay_object(p, t)  # type: ignore[union-attr]
             )
-            if replay is not None and tier not in found and replay_matches_tier(replay, tier, cfg):
+            if not result:
+                continue
+            replay, obj = result
+            if replay is None or tier in found:
+                continue
+            trusted = bool(obj and object_implies_tier(obj, tier, settings))
+            if trusted or replay_matches_tier(replay, tier, cfg):
                 found[tier] = replay
-                entry = manifest_tier_entry(manifest, platform, tier)
-                uri = entry.get("latest_uri")
-                if uri:
-                    paths[tier] = str(uri)
-                else:
-                    obj = latest_replay_object(platform, settings, tier=tier)
+                if obj:
                     paths[tier] = f"gs://{settings.bucket}/{obj}"
+                else:
+                    paths[tier] = f"gs://{settings.bucket}/{latest_replay_object(platform, settings, tier=tier)}"
         return found, paths
 
     async def _merge_replay_sources(
@@ -325,7 +333,10 @@ def build_app(backend: ResultsBackend) -> web.Application:
         backend: ResultsBackend = request.app["backend"]
         tier = request.rel_url.query.get("workload") or request.rel_url.query.get("tier")
 
-        allow_projection = request.rel_url.query.get("project") not in ("0", "false", "no")
+        allow_projection = (
+            backend.source != "gcs"
+            and request.rel_url.query.get("project") in ("1", "true", "yes")
+        )
         replay, replay_path, projected, resolved_tier = await backend.get_replay(
             platform, tier, allow_projection=allow_projection,
         )
@@ -385,8 +396,23 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "gpu": gpu_replay,
         })
 
+    async def handle_gcs_inspect(_request: web.Request) -> web.Response:
+        backend: ResultsBackend = _request.app["backend"]
+        if not backend.gcs or not backend.gcs.enabled:
+            return web.json_response({"error": "GCS not configured"}, status=503)
+        out: dict[str, Any] = {"bucket": backend.gcs.settings.bucket, "tiers": {}}
+        for platform in PLATFORMS:
+            out["tiers"][platform] = {}
+            for tier in workload_tier_ids():
+                info = await backend._gcs_read(
+                    lambda p=platform, t=tier: backend.gcs.inspect_tier(p, t)  # type: ignore[union-attr]
+                )
+                out["tiers"][platform][tier] = info
+        return web.json_response(out)
+
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/status", handle_status)
+    app.router.add_get("/api/gcs/inspect", handle_gcs_inspect)
     app.router.add_get("/api/workloads", handle_workloads)
     app.router.add_get("/api/results/{platform}", handle_results)
     app.router.add_get("/api/hardware", handle_hardware)
@@ -404,8 +430,8 @@ def main() -> None:
     parser.add_argument(
         "--source",
         choices=["auto", "gcs", "local"],
-        default="auto",
-        help="auto: merge GCS + local (newest per tier); gcs: GCS only; local: results/ only",
+        default="gcs",
+        help="gcs: GCS only (default); auto: merge GCS + local; local: results/ only",
     )
     parser.add_argument("--gcs-bucket", help="Override GCS_RESULTS_BUCKET")
     parser.add_argument("--gcs-project", help="Override GCS_RESULTS_PROJECT")

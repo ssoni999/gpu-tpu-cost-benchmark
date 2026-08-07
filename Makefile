@@ -1,4 +1,4 @@
-.PHONY: help install trace trace-all replay replay-all replay-live dashboard ui manifests migration-diff upload-results normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace trace-all replay replay-all replay-live dashboard ui manifests migration-diff upload-results pull-gcs rebuild-gcs-manifest normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
@@ -9,7 +9,7 @@ MODEL ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; 
 WARMUP ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['benchmark']['warmup_requests'])")
 DASHBOARD_PORT ?= 8765
 UI_PORT ?= 8787
-RESULTS_SOURCE ?= auto
+RESULTS_SOURCE ?= gcs
 
 help:
 	@echo "GPU vs TPU cost benchmark — Option A: trace + replay"
@@ -19,7 +19,9 @@ help:
 	@echo "  make trace-all               Generate traces for all tiers"
 	@echo "  make replay-all TARGET=...   Replay all tiers on tpu + gpu (needs port-forward)"
 	@echo "  make replay TARGET=... PLATFORM=tpu TIER=medium"
-	@echo "  make ui                                 Results UI on port $(UI_PORT) (GCS or local)"
+	@echo "  make ui                                 Results UI on port $(UI_PORT) (GCS default)"
+	@echo "  make pull-gcs                           Download all tier replays from GCS → results/"
+	@echo "  make rebuild-gcs-manifest               Write latest/manifest.json from bucket objects"
 	@echo "  make upload-results                     Push local results/*.json to GCS"
 	@echo "  make manifests                          Render tiny-model*.yaml from benchmark_config.yaml"
 	@echo "  make migration-diff                     Print GPU vs TPU parameter diff"
@@ -88,6 +90,14 @@ upload-results:
 		$(if $(GCS_BUCKET),--bucket $(GCS_BUCKET),) \
 		$(if $(GCS_PROJECT),--project $(GCS_PROJECT),) \
 		$(if $(PLATFORM),--platform $(PLATFORM),)
+
+pull-gcs:
+	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \
+	PYTHONPATH=scripts python3 scripts/pull_gcs_results.py --rebuild-manifest
+
+rebuild-gcs-manifest:
+	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \
+	PYTHONPATH=scripts python3 scripts/pull_gcs_results.py --manifest-only --rebuild-manifest
 
 dashboard:
 	PYTHONPATH=scripts python3 scripts/dashboard_server.py --port $(DASHBOARD_PORT)
