@@ -1123,8 +1123,10 @@
         const availGpu = (gpuRes.available_tiers || []).join(', ') || 'none';
         const tpuSrc = tpuRes.replay_source || statusRes.tier_sources?.tpu?.[currentWorkload] || '—';
         const gpuSrc = gpuRes.replay_source || statusRes.tier_sources?.gpu?.[currentWorkload] || '—';
+        const tpuPath = tpuRes.replay_path || '';
+        const gpuPath = gpuRes.replay_path || '';
         document.getElementById('data-source').textContent =
-          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''} · workload: ${currentWorkload} · tpu: ${tpuSrc} (${availTpu}) · gpu: ${gpuSrc} (${availGpu})`;
+          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''} · workload: ${currentWorkload} · tpu: ${tpuSrc} (${availTpu}) · gpu: ${gpuSrc} (${availGpu})${tpuPath ? ' · ' + tpuPath.split('/').slice(-4).join('/') : ''}`;
         updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
         updatedEl.className = 'pill';
       } catch (e) {

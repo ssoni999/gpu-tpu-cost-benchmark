@@ -79,6 +79,7 @@ replay:
 
 ui:
 	@set -a; [ -f configs/gcs.env ] && . configs/gcs.env; set +a; \
+	fuser -k $(UI_PORT)/tcp 2>/dev/null || true; \
 	PYTHONPATH=scripts python3 scripts/results_server.py --port $(UI_PORT) \
 		--source $(RESULTS_SOURCE) \
 		$(if $(GCS_BUCKET),--gcs-bucket $(GCS_BUCKET),) \

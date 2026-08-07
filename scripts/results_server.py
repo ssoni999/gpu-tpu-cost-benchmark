@@ -65,6 +65,14 @@ def _local_live_candidates(platform: str, tier: str) -> list[Path]:
     return paths
 
 
+def _path_trusts_tier(path: Path, tier: str, cfg: dict[str, Any] | None = None) -> bool:
+    """True when file lives in a tier-specific directory (results/.../small/...)."""
+    from config import workload_tier_ids
+
+    cfg = cfg or load_config()
+    return path.parent.name == tier and tier in workload_tier_ids(cfg)
+
+
 def _collect_replay_file(
     path: Path,
     path_tier: str,
@@ -76,7 +84,8 @@ def _collect_replay_file(
     replay = _read_json(path)
     if replay is None:
         return
-    if not replay_matches_tier(replay, path_tier, cfg):
+    trusted = _path_trusts_tier(path, path_tier, cfg)
+    if not trusted and not replay_matches_tier(replay, path_tier, cfg):
         return
     # First path match wins for this tier (tier-specific before legacy).
     if path_tier not in found:
@@ -225,9 +234,29 @@ class ResultsBackend:
         """Return replay for tier. Projection is opt-in (disabled by default)."""
         cfg = load_config()
         tier = tier or default_workload(cfg)
+
+        # GCS-only: fetch the exact tier object every time (latest/{tier}/{platform}/...).
+        if self.source == "gcs" and self.gcs and self.gcs.enabled:
+            result = await self._gcs_read(
+                lambda p=platform, t=tier: self.gcs.read_replay_object(p, t)  # type: ignore[union-attr]
+            )
+            if result:
+                replay, obj = result
+                if replay is not None:
+                    settings = self.gcs.settings
+                    trusted = bool(obj and object_implies_tier(obj, tier, settings))
+                    if trusted or replay_matches_tier(replay, tier, cfg):
+                        out = dict(replay)
+                        out["projected"] = False
+                        out.setdefault("workload_tier", tier)
+                        path = f"gs://{settings.bucket}/{obj}" if obj else ""
+                        self._tier_sources.setdefault(platform, {})[tier] = "gcs"
+                        return out, path, False, tier
+            return None, str(replay_result_path(platform, tier).relative_to(ROOT)), False, tier
+
         replays, replay_paths, _sources = await self._merge_replay_sources(platform)
 
-        if tier in replays and replay_matches_tier(replays[tier], tier, cfg):
+        if tier in replays:
             replay = dict(replays[tier])
             replay["projected"] = False
             replay.setdefault("workload_tier", tier)
@@ -244,6 +273,20 @@ class ResultsBackend:
         return None, str(replay_result_path(platform, tier).relative_to(ROOT)), False, tier
 
     async def list_measured_tiers(self, platform: str) -> list[str]:
+        if self.source == "gcs" and self.gcs and self.gcs.enabled:
+            cfg = load_config()
+            found: list[str] = []
+            for tier in workload_tier_ids():
+                result = await self._gcs_read(
+                    lambda p=platform, t=tier: self.gcs.read_replay_object(p, t)  # type: ignore[union-attr]
+                )
+                if not result or result[0] is None:
+                    continue
+                replay, obj = result
+                trusted = bool(obj and object_implies_tier(obj, tier, self.gcs.settings))
+                if trusted or replay_matches_tier(replay, tier, cfg):
+                    found.append(tier)
+            return sorted(found)
         replays, _, _ = await self._merge_replay_sources(platform)
         return sorted(replays.keys())
 
@@ -306,6 +349,22 @@ def build_app(backend: ResultsBackend) -> web.Application:
         backend: ResultsBackend = _request.app["backend"]
         manifest = await backend.get_manifest()
         settings = backend.gcs.settings if backend.gcs else None
+        gcs_tiers: dict[str, dict[str, Any]] = {}
+        if backend.source == "gcs" and backend.gcs and backend.gcs.enabled:
+            for platform in PLATFORMS:
+                gcs_tiers[platform] = {}
+                for tier in workload_tier_ids():
+                    result = await backend._gcs_read(
+                        lambda p=platform, t=tier: backend.gcs.read_replay_object(p, t)  # type: ignore[union-attr]
+                    )
+                    if result and result[0]:
+                        replay, obj = result
+                        gcs_tiers[platform][tier] = {
+                            "object": obj,
+                            "output_tokens_per_second": replay.get("output_tokens_per_second"),
+                            "requests": (replay.get("successful_requests") or 0)
+                            + (replay.get("failed_requests") or 0),
+                        }
         return web.json_response({
             "data_source": backend.data_source,
             "results_source": backend.source,
@@ -313,6 +372,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "gcs_project": settings.project if settings else None,
             "gcs_prefix": settings.prefix if settings else None,
             "manifest": manifest,
+            "gcs_loaded": gcs_tiers,
             "tier_sources": {
                 "tpu": backend.tier_sources("tpu"),
                 "gpu": backend.tier_sources("gpu"),
@@ -443,7 +503,7 @@ def main() -> None:
         project=args.gcs_project,
         prefix=args.gcs_prefix,
     )
-    gcs_store = GcsResultsStore(settings=settings) if settings.enabled else None
+        gcs_store = GcsResultsStore(settings=settings, cache_ttl_s=0.0) if settings.enabled else None
     backend = ResultsBackend(source=args.source, gcs=gcs_store)
 
     print(f"Results UI: http://127.0.0.1:{args.port}/")
