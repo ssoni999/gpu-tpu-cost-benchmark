@@ -57,6 +57,24 @@ def _local_live_candidates(platform: str, tier: str) -> list[Path]:
     return paths
 
 
+def _replay_tier_key(replay: dict[str, Any], path: Path, path_tier: str) -> str:
+    """Use workload_tier embedded in replay JSON when present."""
+    tier = replay.get("workload_tier") or replay.get("benchmark_contract", {}).get("workload_tier")
+    if tier in workload_tier_ids():
+        return tier
+    return path_tier
+
+
+def _collect_replay_file(path: Path, path_tier: str, found: dict[str, dict[str, Any]]) -> None:
+    replay = _read_json(path)
+    if replay is None:
+        return
+    key = _replay_tier_key(replay, path, path_tier)
+    # Prefer tier-specific paths over legacy when both map to the same tier key.
+    if key not in found or path_tier == key:
+        found[key] = replay
+
+
 class ResultsBackend:
     def __init__(self, source: str, gcs: GcsResultsStore | None) -> None:
         self.source = source
@@ -77,10 +95,7 @@ class ResultsBackend:
         found: dict[str, dict[str, Any]] = {}
         for tier in workload_tier_ids():
             for path in _local_replay_candidates(platform, tier):
-                replay = _read_json(path)
-                if replay is not None:
-                    found[tier] = replay
-                    break
+                _collect_replay_file(path, tier, found)
         return found
 
     async def _load_gcs_replays(self, platform: str) -> dict[str, dict[str, Any]]:
@@ -92,41 +107,54 @@ class ResultsBackend:
                 lambda p=platform, t=tier: self.gcs.read_replay(p, t)  # type: ignore[union-attr]
             )
             if replay is not None:
-                found[tier] = replay
+                key = _replay_tier_key(replay, Path(tier), tier)
+                found[key] = replay
         return found
 
     async def get_replay(
         self,
         platform: str,
         tier: str | None = None,
+        *,
+        allow_projection: bool = False,
     ) -> tuple[dict[str, Any] | None, str, bool, str]:
-        """Return replay for tier, projecting from nearest measured tier if needed."""
+        """Return replay for tier. Projection is opt-in (disabled by default)."""
         cfg = load_config()
         tier = tier or default_workload(cfg)
         replays: dict[str, dict[str, Any]] = {}
 
-        if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
-            replays.update(await self._load_gcs_replays(platform))
+        # Local results win over GCS so Cloud Shell tier replays aren't masked by stale GCS.
         if self.source in ("local", "auto"):
             replays.update(await self._load_local_replays(platform))
-
-        replay, source_tier, projected = resolve_tier_replay(replays, tier, platform, cfg)
-        if replay is not None:
-            if self.gcs and self.gcs.enabled:
-                path = f"gs://{self.gcs.settings.bucket}/{latest_replay_object(platform, self.gcs.settings, tier=tier)}"
-            else:
-                path = str(replay_result_path(platform, tier).relative_to(ROOT))
-            if projected:
-                path = f"{path} (projected from {source_tier})"
-            return replay, path, projected, tier
-
         if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
-            gcs_path = f"gs://{self.gcs.settings.bucket}/{latest_replay_object(platform, self.gcs.settings, tier=tier)}"
-            if self.source == "gcs":
-                return None, gcs_path, False, tier
+            for t, data in (await self._load_gcs_replays(platform)).items():
+                replays.setdefault(t, data)
 
-        local_path = replay_result_path(platform, tier)
-        return None, str(local_path.relative_to(ROOT)), False, tier
+        if tier in replays:
+            replay = dict(replays[tier])
+            replay["workload_tier"] = tier
+            replay["projected"] = False
+            path = str(replay_result_path(platform, tier).relative_to(ROOT))
+            if self.gcs and self.gcs.enabled and self.source != "local":
+                path = f"gs://{self.gcs.settings.bucket}/{latest_replay_object(platform, self.gcs.settings, tier=tier)}"
+            return replay, path, False, tier
+
+        if allow_projection and replays:
+            replay, source_tier, projected = resolve_tier_replay(replays, tier, platform, cfg)
+            if replay is not None:
+                path = f"(projected from {source_tier})"
+                return replay, path, projected, tier
+
+        return None, str(replay_result_path(platform, tier).relative_to(ROOT)), False, tier
+
+    async def list_measured_tiers(self, platform: str) -> list[str]:
+        replays: dict[str, dict[str, Any]] = {}
+        if self.source in ("local", "auto"):
+            replays.update(await self._load_local_replays(platform))
+        if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
+            for t, data in (await self._load_gcs_replays(platform)).items():
+                replays.setdefault(t, data)
+        return sorted(replays.keys())
 
     async def get_live(self, platform: str, tier: str | None = None) -> tuple[dict[str, Any] | None, str]:
         tier = tier or default_workload()
@@ -209,7 +237,10 @@ def build_app(backend: ResultsBackend) -> web.Application:
         backend: ResultsBackend = request.app["backend"]
         tier = request.rel_url.query.get("workload") or request.rel_url.query.get("tier")
 
-        replay, replay_path, projected, resolved_tier = await backend.get_replay(platform, tier)
+        allow_projection = request.rel_url.query.get("project") in ("1", "true", "yes")
+        replay, replay_path, projected, resolved_tier = await backend.get_replay(
+            platform, tier, allow_projection=allow_projection,
+        )
         live, live_path = await backend.get_live(platform, resolved_tier)
         cost_metrics = None
         if replay:
@@ -218,6 +249,8 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "platform": platform,
             "workload_tier": resolved_tier,
             "projected": projected,
+            "tier_missing": replay is None and not (live and live.get("summary")),
+            "available_tiers": sorted(await backend.list_measured_tiers(platform)),
             "data_source": backend.data_source,
             "replay_path": replay_path,
             "live_path": live_path,

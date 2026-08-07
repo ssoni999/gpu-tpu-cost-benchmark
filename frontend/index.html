@@ -959,7 +959,7 @@
     }
 
     function resultsUrl(platform) {
-      return `/api/results/${platform}?workload=${encodeURIComponent(currentWorkload)}`;
+      return `/api/results/${platform}?workload=${encodeURIComponent(currentWorkload)}&_=${Date.now()}`;
     }
 
     function renderPanel(platform, data, otherData) {
@@ -972,9 +972,13 @@
 
       if (!data.has_replay) {
         const status = data.is_running ? 'running' : 'missing';
+        const tier = data.workload_tier || currentWorkload;
+        const avail = (data.available_tiers || []).join(', ') || 'none';
         const msg = data.is_running
           ? 'Replay in progress… (reading live.json)'
-          : `No results yet. Run:<br><code>make replay TARGET=http://127.0.0.1:8000 PLATFORM=${platform} MODEL='…'</code>`;
+          : `No <strong>${tier}</strong> replay for ${platform.toUpperCase()}.<br>`
+            + `Run:<br><code>make replay TARGET=http://127.0.0.1:8000 PLATFORM=${platform} TIER=${tier} MODEL='Qwen/Qwen2.5-0.5B-Instruct'</code>`
+            + `<br><span style="font-size:0.8rem">Measured tiers for ${platform}: ${avail}</span>`;
         return `
           <div class="panel ${headClass}">
             <div class="panel-head ${headClass}"><h2>${label}</h2><span class="pill ${status}">${status}</span></div>
@@ -1003,9 +1007,10 @@
         return `<div class="error-banner"><strong>All ${es.total_failures} requests failed</strong> — metrics are zero until replay succeeds.<ul class="error-list">${items}</ul></div>`;
       })();
 
+      const tierLabel = workloadMeta(data.workload_tier || currentWorkload).label || currentWorkload;
       const projectedBadge = data.projected
         ? '<span class="projected-badge" title="Scaled from measured replay">Projected</span>'
-        : '';
+        : `<span class="projected-badge" style="background:rgba(74,222,128,0.12);color:var(--tpu-bright);border-color:rgba(74,222,128,0.25)" title="${data.replay_path || ''}">Measured · ${tierLabel}</span>`;
 
       return `
         <div class="panel ${headClass}">
@@ -1109,8 +1114,10 @@
         const src = statusRes.data_source || 'local';
         const bucket = statusRes.gcs_bucket ? `gs://${statusRes.gcs_bucket}/${statusRes.gcs_prefix || 'latest'}` : '';
         const manifestAt = statusRes.manifest?.updated_at;
+        const availTpu = (tpuRes.available_tiers || []).join(', ') || 'none';
+        const availGpu = (gpuRes.available_tiers || []).join(', ') || 'none';
         document.getElementById('data-source').textContent =
-          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''} · workload: ${currentWorkload}`;
+          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''} · workload: ${currentWorkload} · tpu tiers: ${availTpu} · gpu tiers: ${availGpu}`;
         updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
         updatedEl.className = 'pill';
       } catch (e) {
