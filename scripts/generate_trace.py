@@ -10,7 +10,7 @@ import secrets
 import time
 from pathlib import Path
 
-from config import load_config
+from config import default_workload, load_config, workload_profile, workload_trace_meta_path, workload_trace_path
 from prompt_catalog import SHARED_HANDBOOK, build_user_prompt
 
 
@@ -184,11 +184,13 @@ def main() -> None:
     parser.add_argument("-o", "--output", default="workload/prompts.jsonl")
     parser.add_argument("--meta", default="workload/trace_meta.json", help="Write seed and params here")
     parser.add_argument("--seed", type=int, default=None, help="Omit for a new random seed each run")
+    parser.add_argument("--tier", default=None, help="Workload tier: small, medium, high")
     parser.add_argument("--config", help="Path to benchmark_config.yaml")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
-    bench = cfg["benchmark"]
+    tier = args.tier or default_workload(cfg)
+    bench = workload_profile(cfg, tier)
     num_requests = int(bench["num_prompts"])
     input_tokens = int(bench["input_tokens"])
     output_tokens = int(bench["output_tokens"])
@@ -216,6 +218,8 @@ def main() -> None:
     )
 
     output = Path(args.output)
+    if tier and str(args.output) == "workload/prompts.jsonl":
+        output = workload_trace_path(tier)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as f:
         for record in records:
@@ -223,6 +227,7 @@ def main() -> None:
 
     categories = {r["category"] for r in records}
     meta = {
+        "workload_tier": tier,
         "seed": seed,
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "model": cfg["model"],
@@ -235,9 +240,12 @@ def main() -> None:
         "output_path": str(output),
     }
     meta_path = Path(args.meta)
+    if tier and str(args.meta) == "workload/trace_meta.json":
+        meta_path = workload_trace_meta_path(tier)
     meta_path.parent.mkdir(parents=True, exist_ok=True)
     meta_path.write_text(json.dumps(meta, indent=2) + "\n", encoding="utf-8")
 
+    print(f"Workload tier: {tier}")
     print(f"Wrote {len(records)} requests to {output}")
     print(f"Trace seed: {seed} (save this to reproduce the same workload)")
     print(f"Unique prompts: {meta['unique_prompts']}/{num_requests}")

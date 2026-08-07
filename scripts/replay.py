@@ -20,7 +20,15 @@ import aiohttp
 import numpy as np
 import openai
 
-from config import load_config, platform_metadata
+from config import (
+    default_workload,
+    load_config,
+    platform_metadata,
+    replay_result_path,
+    replay_live_path,
+    workload_profile,
+    workload_trace_path,
+)
 from cost_metrics import compute_replay_cost_metrics
 from gcs_results import try_upload_replay
 from dashboard_client import LiveDashboard
@@ -758,6 +766,11 @@ def main() -> int:
     parser.add_argument("--warmup", type=int, default=int(bench.get("warmup_requests", 10)))
     parser.add_argument("--api", choices=["auto", "chat", "completions"], default="auto")
     parser.add_argument(
+        "--tier",
+        default=None,
+        help="Workload tier (small/medium/high); sets trace/output paths when omitted",
+    )
+    parser.add_argument(
         "--platform",
         choices=["auto", "tpu", "gpu"],
         default="auto",
@@ -798,9 +811,13 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    tier = args.tier or default_workload(cfg)
+
     trace_path = Path(args.trace)
+    if tier and str(args.trace) == "workload/prompts.jsonl":
+        trace_path = workload_trace_path(tier)
     if not trace_path.exists():
-        print(f"Trace not found: {trace_path}. Run: make trace", file=sys.stderr)
+        print(f"Trace not found: {trace_path}. Run: make trace TIER={tier}", file=sys.stderr)
         return 1
 
     trace = load_trace(trace_path)
@@ -820,7 +837,11 @@ def main() -> int:
 
     live_json = Path(args.live_json) if args.live_json else None
     if live_json is None and args.platform in ("tpu", "gpu"):
-        live_json = Path(f"results/{args.platform}/live.json")
+        live_json = replay_live_path(args.platform, tier)
+
+    out_path = Path(args.output)
+    if args.platform in ("tpu", "gpu") and str(args.output) == f"results/{args.platform}/run_01_replay.json":
+        out_path = replay_result_path(args.platform, tier)
 
     dashboard_url = args.dashboard_url
 
@@ -837,6 +858,7 @@ def main() -> int:
     if live_json:
         print(f" Live JSON: {live_json}")
         print(f" Results UI: run 'make ui' then open http://127.0.0.1:8787/")
+    print(f" Workload tier: {tier}")
     print("=" * 60)
 
     try:
@@ -875,14 +897,17 @@ def main() -> int:
     )
     summary["platform"] = args.platform if args.platform in ("tpu", "gpu") else platform
     cfg = load_config()
+    tier_profile = workload_profile(cfg, tier)
     if args.platform in ("tpu", "gpu"):
+        summary["workload_tier"] = tier
         summary["platform_config"] = platform_metadata(cfg, args.platform)
         summary["benchmark_contract"] = {
             "model": cfg["model"],
             "trace": str(trace_path),
+            "workload_tier": tier,
             "num_requests": len(trace),
-            "input_tokens": cfg["benchmark"]["input_tokens"],
-            "output_tokens": cfg["benchmark"]["output_tokens"],
+            "input_tokens": tier_profile["input_tokens"],
+            "output_tokens": tier_profile["output_tokens"],
             "seed": cfg["benchmark"].get("seed"),
         }
         summary["cost_metrics"] = compute_replay_cost_metrics(summary, args.platform)
@@ -895,13 +920,12 @@ def main() -> int:
 
         asyncio.run(_finish_live())
 
-    out = Path(args.output)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
-    print(f"Wrote {out}")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote {out_path}")
 
     if args.platform in ("tpu", "gpu"):
-        try_upload_replay(args.platform, summary)
+        try_upload_replay(args.platform, summary, tier=tier)
 
     return 0 if summary["failed_requests"] == 0 else 2
 

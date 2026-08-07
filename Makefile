@@ -1,8 +1,10 @@
-.PHONY: help install trace replay replay-live dashboard ui manifests migration-diff upload-results normalize-replay normalize cost compare bench-cmd
+.PHONY: help install trace trace-all replay replay-live dashboard ui manifests migration-diff upload-results normalize-replay normalize cost compare bench-cmd
 
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
-TRACE ?= workload/prompts.jsonl
+TIER ?= medium
+TRACE ?= workload/$(TIER)/prompts.jsonl
+REPLAY_OUT ?= results/$(PLATFORM)/$(TIER)/run_01_replay.json
 MODEL ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['model'])")
 WARMUP ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['benchmark']['warmup_requests'])")
 DASHBOARD_PORT ?= 8765
@@ -13,9 +15,9 @@ help:
 	@echo "GPU vs TPU cost benchmark — Option A: trace + replay"
 	@echo ""
 	@echo "  make install              Python dependencies"
-	@echo "  make trace                New JSONL workload (random seed unless SEED= set)"
-	@echo "  make trace SEED=100       Reproducible workload"
-	@echo "  make replay TARGET=... PLATFORM=tpu   Replay trace against vLLM"
+	@echo "  make trace TIER=medium       JSONL workload for tier (small|medium|high)"
+	@echo "  make trace-all               Generate traces for all tiers"
+	@echo "  make replay TARGET=... PLATFORM=tpu TIER=medium"
 	@echo "  make ui                                 Results UI on port $(UI_PORT) (GCS or local)"
 	@echo "  make upload-results                     Push local results/*.json to GCS"
 	@echo "  make manifests                          Render tiny-model*.yaml from benchmark_config.yaml"
@@ -36,8 +38,14 @@ install:
 	pip install -r requirements.txt
 
 trace:
-	PYTHONPATH=scripts python3 scripts/generate_trace.py -o $(TRACE) \
+	PYTHONPATH=scripts python3 scripts/generate_trace.py --tier $(TIER) -o $(TRACE) \
 		$(if $(SEED),--seed $(SEED),)
+
+trace-all:
+	@for t in small medium high; do \
+		echo "=== trace $$t ==="; \
+		$(MAKE) trace TIER=$$t TRACE=workload/$$t/prompts.jsonl || exit 1; \
+	done
 
 replay:
 	@test -n "$(TARGET)" || (echo "TARGET is required, e.g. TARGET=http://127.0.0.1:8000" && exit 1)
@@ -47,8 +55,9 @@ replay:
 		--target $(TARGET) \
 		--model '$(MODEL)' \
 		--platform $(PLATFORM) \
+		--tier $(TIER) \
 		--trace $(TRACE) \
-		--output results/$(PLATFORM)/run_01_replay.json \
+		--output $(REPLAY_OUT) \
 		--warmup $(WARMUP) \
 		$(if $(SPEED),--speed $(SPEED),) \
 		$(if $(CONCURRENCY),--concurrency $(CONCURRENCY),) \

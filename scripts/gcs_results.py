@@ -85,12 +85,30 @@ def download_json(object_name: str, settings: GcsSettings | None = None) -> dict
     return json.loads(blob.download_as_text(encoding="utf-8"))
 
 
-def latest_replay_object(platform: str, settings: GcsSettings | None = None) -> str:
+def latest_replay_object(
+    platform: str,
+    settings: GcsSettings | None = None,
+    tier: str = "medium",
+) -> str:
+    settings = settings or gcs_settings()
+    return f"{settings.prefix}/{tier}/{platform}/run_01_replay.json"
+
+
+def legacy_latest_replay_object(platform: str, settings: GcsSettings | None = None) -> str:
     settings = settings or gcs_settings()
     return f"{settings.prefix}/{platform}/run_01_replay.json"
 
 
-def latest_live_object(platform: str, settings: GcsSettings | None = None) -> str:
+def latest_live_object(
+    platform: str,
+    settings: GcsSettings | None = None,
+    tier: str = "medium",
+) -> str:
+    settings = settings or gcs_settings()
+    return f"{settings.prefix}/{tier}/{platform}/live.json"
+
+
+def legacy_latest_live_object(platform: str, settings: GcsSettings | None = None) -> str:
     settings = settings or gcs_settings()
     return f"{settings.prefix}/{platform}/live.json"
 
@@ -115,18 +133,25 @@ def _update_manifest(
     latest_uri: str,
     summary: dict[str, Any],
     settings: GcsSettings,
+    *,
+    tier: str = "medium",
 ) -> None:
     manifest = read_manifest(settings)
     manifest["updated_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     manifest.setdefault("platforms", {})
-    manifest["platforms"][platform] = {
+    manifest["platforms"].setdefault(platform, {})
+    manifest["platforms"][platform].setdefault("tiers", {})
+    manifest["platforms"][platform]["tiers"][tier] = {
         "latest_uri": latest_uri,
         "uploaded_at": manifest["updated_at"],
         "successful_requests": summary.get("successful_requests"),
         "failed_requests": summary.get("failed_requests"),
         "output_tokens_per_second": summary.get("output_tokens_per_second"),
         "model": summary.get("model"),
+        "workload_tier": tier,
     }
+    # Backward-compatible flat fields (latest upload wins)
+    manifest["platforms"][platform].update(manifest["platforms"][platform]["tiers"][tier])
     upload_json(manifest, manifest_object(settings), settings=settings)
 
 
@@ -136,8 +161,9 @@ def upload_replay_summary(
     *,
     settings: GcsSettings | None = None,
     archive: bool = True,
+    tier: str = "medium",
 ) -> str | None:
-    """Upload replay JSON to GCS latest/ + optional timestamped archive."""
+    """Upload replay JSON to GCS latest/{tier}/ + optional timestamped archive."""
     if platform not in PLATFORMS:
         raise ValueError(f"platform must be one of {PLATFORMS}")
 
@@ -145,15 +171,16 @@ def upload_replay_summary(
     if not settings.enabled:
         return None
 
-    latest_obj = latest_replay_object(platform, settings)
+    tier = summary.get("workload_tier") or tier
+    latest_obj = latest_replay_object(platform, settings, tier=tier)
     latest_uri = upload_json(summary, latest_obj, settings=settings)
 
     if archive:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H%M%SZ")
-        archive_obj = f"{settings.archive_prefix}/{platform}/{ts}_run_01_replay.json"
+        archive_obj = f"{settings.archive_prefix}/{tier}/{platform}/{ts}_run_01_replay.json"
         upload_json(summary, archive_obj, settings=settings)
 
-    _update_manifest(platform, latest_uri, summary, settings)
+    _update_manifest(platform, latest_uri, summary, settings, tier=tier)
     return latest_uri
 
 
@@ -250,25 +277,41 @@ class GcsResultsStore:
         self._cache[key] = (now, value)
         return value
 
-    def read_replay(self, platform: str) -> dict[str, Any] | None:
+    def read_replay(self, platform: str, tier: str = "medium") -> dict[str, Any] | None:
         if not self.enabled:
             return None
-        obj = latest_replay_object(platform, self.settings)
+        obj = latest_replay_object(platform, self.settings, tier=tier)
 
         def _load() -> dict[str, Any] | None:
-            return download_json(obj, settings=self.settings)
+            data = download_json(obj, settings=self.settings)
+            if data is not None:
+                return data
+            if tier == "medium":
+                return download_json(
+                    legacy_latest_replay_object(platform, self.settings),
+                    settings=self.settings,
+                )
+            return None
 
-        return self._cached(f"replay:{platform}", _load)
+        return self._cached(f"replay:{platform}:{tier}", _load)
 
-    def read_live(self, platform: str) -> dict[str, Any] | None:
+    def read_live(self, platform: str, tier: str = "medium") -> dict[str, Any] | None:
         if not self.enabled:
             return None
-        obj = latest_live_object(platform, self.settings)
+        obj = latest_live_object(platform, self.settings, tier=tier)
 
         def _load() -> dict[str, Any] | None:
-            return download_json(obj, settings=self.settings)
+            data = download_json(obj, settings=self.settings)
+            if data is not None:
+                return data
+            if tier == "medium":
+                return download_json(
+                    legacy_latest_live_object(platform, self.settings),
+                    settings=self.settings,
+                )
+            return None
 
-        return self._cached(f"live:{platform}", _load)
+        return self._cached(f"live:{platform}:{tier}", _load)
 
     def read_comparison(self) -> dict[str, Any] | None:
         if not self.enabled:
@@ -290,7 +333,12 @@ class GcsResultsStore:
         return self._cached("manifest", _load) or {}
 
 
-def try_upload_replay(platform: str, summary: dict[str, Any]) -> str | None:
+def try_upload_replay(
+    platform: str,
+    summary: dict[str, Any],
+    *,
+    tier: str = "medium",
+) -> str | None:
     """Best-effort upload; prints warning on failure."""
     settings = gcs_settings()
     if not settings.enabled:
@@ -298,7 +346,8 @@ def try_upload_replay(platform: str, summary: dict[str, Any]) -> str | None:
     if os.environ.get("GCS_UPLOAD", "1") not in ("1", "true", "yes"):
         return None
     try:
-        uri = upload_replay_summary(platform, summary, settings=settings)
+        tier = summary.get("workload_tier") or tier
+        uri = upload_replay_summary(platform, summary, settings=settings, tier=tier)
         print(f"Uploaded to {uri}")
         return uri
     except Exception as exc:  # noqa: BLE001

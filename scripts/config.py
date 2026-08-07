@@ -10,6 +10,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "configs" / "benchmark_config.yaml"
+WORKLOAD_TIERS = ("small", "medium", "high")
 
 
 def load_config(path: Path | str | None = None) -> dict[str, Any]:
@@ -22,6 +23,79 @@ def platform_block(cfg: dict[str, Any], platform: str) -> dict[str, Any]:
     if platform not in ("gpu", "tpu"):
         raise ValueError(f"platform must be gpu or tpu, got {platform!r}")
     return cfg[platform]
+
+
+def default_workload(cfg: dict[str, Any] | None = None) -> str:
+    cfg = cfg or load_config()
+    tier = cfg.get("default_workload", "medium")
+    if tier in workload_tier_ids(cfg):
+        return tier
+    return "medium"
+
+
+def workload_tier_ids(cfg: dict[str, Any] | None = None) -> list[str]:
+    cfg = cfg or load_config()
+    tiers = cfg.get("workloads")
+    if isinstance(tiers, dict) and tiers:
+        return list(tiers.keys())
+    return ["medium"]
+
+
+def workload_profile(cfg: dict[str, Any] | None, tier: str) -> dict[str, Any]:
+    """Merged benchmark params for a workload tier (shared benchmark + tier overrides)."""
+    cfg = cfg or load_config()
+    base = dict(cfg.get("benchmark", {}))
+    overrides = (cfg.get("workloads") or {}).get(tier, {})
+    base.update(overrides)
+    base["tier"] = tier
+    return base
+
+
+def workload_trace_path(tier: str, root: Path | None = None) -> Path:
+    root = root or ROOT
+    return root / "workload" / tier / "prompts.jsonl"
+
+
+def workload_trace_meta_path(tier: str, root: Path | None = None) -> Path:
+    root = root or ROOT
+    return root / "workload" / tier / "trace_meta.json"
+
+
+def replay_result_path(platform: str, tier: str = "medium", root: Path | None = None) -> Path:
+    root = root or ROOT
+    return root / "results" / platform / tier / "run_01_replay.json"
+
+
+def replay_live_path(platform: str, tier: str = "medium", root: Path | None = None) -> Path:
+    root = root or ROOT
+    return root / "results" / platform / tier / "live.json"
+
+
+def legacy_replay_path(platform: str, root: Path | None = None) -> Path:
+    """Pre-tier layout: results/{platform}/run_01_replay.json (treated as medium)."""
+    root = root or ROOT
+    return root / "results" / platform / "run_01_replay.json"
+
+
+def workloads_catalog(cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    cfg = cfg or load_config()
+    out: list[dict[str, Any]] = []
+    for tier_id in workload_tier_ids(cfg):
+        profile = workload_profile(cfg, tier_id)
+        out.append({
+            "id": tier_id,
+            "label": profile.get("label", tier_id.title()),
+            "description": profile.get("description", ""),
+            "analogy": profile.get("analogy", ""),
+            "num_prompts": profile.get("num_prompts"),
+            "input_tokens": profile.get("input_tokens"),
+            "output_tokens": profile.get("output_tokens"),
+            "total_tokens_per_run": (
+                int(profile.get("num_prompts", 0))
+                * (int(profile.get("input_tokens", 0)) + int(profile.get("output_tokens", 0)))
+            ),
+        })
+    return out
 
 
 def serving_vllm_args(cfg: dict[str, Any], platform: str) -> list[str]:

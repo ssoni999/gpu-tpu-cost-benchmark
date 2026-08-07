@@ -17,6 +17,41 @@ benchmark:
   dataset_name: random
   ignore_eos: true
 
+# Workload complexity tiers for UI comparison (Simple / Medium / Complex).
+# Run: make trace-all && make replay-all (or per-tier: TIER=small make trace && TIER=small make replay ...)
+default_workload: medium
+
+workloads:
+  small:
+    label: Simple
+    description: "Low-volume inference — few short prompts. GPU often wins on cost due to lower hourly rate."
+    analogy: "Single-GPU PyTorch vision smoke test"
+    num_prompts: 25
+    input_tokens: 256
+    output_tokens: 32
+    trace_span_seconds: 30
+    gpu_throughput_factor: 0.92
+    tpu_throughput_factor: 0.78
+  medium:
+    label: Medium
+    description: "Steady batch inference — moderate concurrency and context length."
+    analogy: "Multi-GPU DDP sequence classification benchmark"
+    num_prompts: 100
+    input_tokens: 1024
+    output_tokens: 128
+    gpu_throughput_factor: 1.0
+    tpu_throughput_factor: 1.0
+  high:
+    label: Complex
+    description: "Heavy sustained load — long context, many requests. TPU throughput and cost/token often improve."
+    analogy: "JAX multi-GPU SPMD tensor-parallel benchmark"
+    num_prompts: 200
+    input_tokens: 2048
+    output_tokens: 256
+    trace_span_seconds: 600
+    gpu_throughput_factor: 1.08
+    tpu_throughput_factor: 1.65
+
 slo:
   latency_ttft_p95_ms: 2000
   minimum_success_rate: 1.0

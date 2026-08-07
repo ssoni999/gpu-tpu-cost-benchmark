@@ -519,6 +519,81 @@
 
     .serving-block strong { color: var(--text-secondary); }
     .serving-block code { font-size: 0.7rem; word-break: break-all; }
+
+    .workload-bar {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem 1.25rem;
+      margin-bottom: 1.25rem;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .workload-bar h3 {
+      margin: 0 0 0.65rem;
+      font-size: 0.78rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .workload-toggle {
+      display: flex;
+      gap: 0.5rem;
+      flex-wrap: wrap;
+    }
+
+    .workload-toggle button {
+      background: var(--section-bg);
+      color: var(--text-secondary);
+      border: 1px solid var(--border);
+      box-shadow: none;
+      padding: 0.55rem 1rem;
+      font-weight: 600;
+      flex: 1;
+      min-width: 100px;
+    }
+
+    .workload-toggle button:hover {
+      border-color: var(--accent);
+      color: var(--text);
+      transform: none;
+      box-shadow: var(--shadow-sm);
+    }
+
+    .workload-toggle button.active {
+      background: linear-gradient(180deg, var(--accent) 0%, color-mix(in srgb, var(--accent) 80%, #000) 100%);
+      color: #fff;
+      border-color: transparent;
+      box-shadow: 0 2px 12px rgba(96, 165, 250, 0.3);
+    }
+
+    .workload-desc {
+      margin-top: 0.75rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      line-height: 1.45;
+    }
+
+    .workload-desc em {
+      color: var(--text-secondary);
+      font-style: normal;
+      font-size: 0.78rem;
+    }
+
+    .projected-badge {
+      font-size: 0.68rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.15rem 0.5rem;
+      border-radius: 999px;
+      background: rgba(251, 191, 36, 0.15);
+      color: var(--pill-running);
+      border: 1px solid rgba(251, 191, 36, 0.25);
+      margin-left: 0.5rem;
+    }
   </style>
 </head>
 <body>
@@ -554,6 +629,11 @@
         </details>
       </aside>
       <div class="content">
+        <div class="workload-bar">
+          <h3>Workload complexity</h3>
+          <div class="workload-toggle" id="workload-toggle"></div>
+          <div class="workload-desc" id="workload-desc"></div>
+        </div>
         <div id="compare-bar" class="compare-bar">
           <h3>Head-to-head (same trace)</h3>
           <div id="compare-rows"></div>
@@ -572,8 +652,12 @@
     const updatedEl = document.getElementById('updated');
     const compareBar = document.getElementById('compare-bar');
     const compareRows = document.getElementById('compare-rows');
+    const workloadToggleEl = document.getElementById('workload-toggle');
+    const workloadDescEl = document.getElementById('workload-desc');
     let autoOn = true;
     let timer = null;
+    let currentWorkload = localStorage.getItem('bench-workload') || 'medium';
+    let workloadCatalog = [];
 
     function fmt(n, d = 1) {
       if (n === undefined || n === null || Number.isNaN(Number(n))) return '—';
@@ -756,14 +840,19 @@
       return { gpu: build('gpu'), tpu: build('tpu') };
     }
 
-    function embeddedHardware() {
+    function embeddedBootData() {
       const el = document.getElementById('embedded-hardware-specs');
-      if (!el) return null;
+      if (!el) return {};
       try {
         return JSON.parse(el.textContent);
       } catch {
-        return null;
+        return {};
       }
+    }
+
+    function embeddedHardware() {
+      const boot = embeddedBootData();
+      return boot.hardware || boot;
     }
 
     function resolveAllHardware(gpuRes, tpuRes, hwRes, migRes) {
@@ -821,6 +910,58 @@
         </div>`;
     }
 
+    function workloadMeta(tierId) {
+      return workloadCatalog.find(w => w.id === tierId) || { id: tierId, label: tierId };
+    }
+
+    function renderWorkloadToggle() {
+      if (!workloadCatalog.length) return;
+      workloadToggleEl.innerHTML = workloadCatalog.map(w => `
+        <button type="button" class="workload-btn${w.id === currentWorkload ? ' active' : ''}" data-tier="${w.id}">
+          ${w.label}
+        </button>
+      `).join('');
+      workloadToggleEl.querySelectorAll('.workload-btn').forEach(btn => {
+        btn.onclick = () => {
+          currentWorkload = btn.dataset.tier;
+          localStorage.setItem('bench-workload', currentWorkload);
+          renderWorkloadToggle();
+          load();
+        };
+      });
+      const w = workloadMeta(currentWorkload);
+      workloadDescEl.innerHTML = [
+        w.description || '',
+        w.analogy ? `<br><em>Analogy: ${w.analogy}</em>` : '',
+        w.num_prompts ? `<br><em>${w.num_prompts} prompts · ${w.input_tokens} in / ${w.output_tokens} out tok</em>` : '',
+      ].join('');
+    }
+
+    async function initWorkloads() {
+      const boot = embeddedBootData();
+      if (boot.workloads?.length) {
+        workloadCatalog = boot.workloads;
+        if (boot.default_workload) currentWorkload = localStorage.getItem('bench-workload') || boot.default_workload;
+      } else {
+        try {
+          const res = await fetch('/api/workloads').then(r => r.json());
+          workloadCatalog = res.tiers || [];
+          currentWorkload = localStorage.getItem('bench-workload') || res.default || 'medium';
+        } catch {
+          workloadCatalog = [
+            { id: 'small', label: 'Simple', description: 'Low-volume inference' },
+            { id: 'medium', label: 'Medium', description: 'Steady batch inference' },
+            { id: 'high', label: 'Complex', description: 'Heavy sustained load' },
+          ];
+        }
+      }
+      renderWorkloadToggle();
+    }
+
+    function resultsUrl(platform) {
+      return `/api/results/${platform}?workload=${encodeURIComponent(currentWorkload)}`;
+    }
+
     function renderPanel(platform, data, otherData) {
       const r = data.replay;
       const other = otherData?.replay;
@@ -862,10 +1003,14 @@
         return `<div class="error-banner"><strong>All ${es.total_failures} requests failed</strong> — metrics are zero until replay succeeds.<ul class="error-list">${items}</ul></div>`;
       })();
 
+      const projectedBadge = data.projected
+        ? '<span class="projected-badge" title="Scaled from measured replay">Projected</span>'
+        : '';
+
       return `
         <div class="panel ${headClass}">
           <div class="panel-head ${headClass}">
-            <h2>${label}</h2>
+            <h2>${label}${projectedBadge}</h2>
             <span class="pill ${status}">${status}</span>
           </div>
           ${errBlock}
@@ -951,12 +1096,13 @@
     async function load() {
       try {
         const [tpuRes, gpuRes, migRes, statusRes, hwRes] = await Promise.all([
-          fetch('/api/results/tpu').then(r => r.json()),
-          fetch('/api/results/gpu').then(r => r.json()),
+          fetch(resultsUrl('tpu')).then(r => r.json()),
+          fetch(resultsUrl('gpu')).then(r => r.json()),
           fetch('/api/migration').then(r => r.json()),
           fetch('/api/status').then(r => r.json()),
           fetch('/api/hardware').then(r => r.ok ? r.json() : null).catch(() => null),
         ]);
+        renderWorkloadToggle();
         panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
         renderCompare(tpuRes, gpuRes);
         renderHardwareSpecs(resolveAllHardware(gpuRes, tpuRes, hwRes, migRes));
@@ -964,7 +1110,7 @@
         const bucket = statusRes.gcs_bucket ? `gs://${statusRes.gcs_bucket}/${statusRes.gcs_prefix || 'latest'}` : '';
         const manifestAt = statusRes.manifest?.updated_at;
         document.getElementById('data-source').textContent =
-          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''}`;
+          `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''} · workload: ${currentWorkload}`;
         updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
         updatedEl.className = 'pill';
       } catch (e) {
@@ -1000,8 +1146,10 @@
 
     renderHardwareSpecs({ gpu: PLATFORM_DEFAULTS.gpu, tpu: PLATFORM_DEFAULTS.tpu });
 
-    load();
-    startAuto();
+    initWorkloads().then(() => {
+      load();
+      startAuto();
+    });
   </script>
 </body>
 </html>

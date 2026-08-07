@@ -11,9 +11,21 @@ from typing import Any
 
 from aiohttp import web
 
-from config import load_config, migration_diff, node_pool_specs, platform_metadata
+from config import (
+    default_workload,
+    legacy_replay_path,
+    load_config,
+    migration_diff,
+    node_pool_specs,
+    platform_metadata,
+    replay_live_path,
+    replay_result_path,
+    workload_tier_ids,
+    workloads_catalog,
+)
 from cost_metrics import compute_replay_cost_metrics
 from gcs_results import GcsResultsStore, GcsSettings, gcs_settings, latest_replay_object
+from workload_projection import resolve_tier_replay
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -31,12 +43,18 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
-def _local_paths(platform: str) -> dict[str, Path]:
-    base = RESULTS / platform
-    return {
-        "replay": base / "run_01_replay.json",
-        "live": base / "live.json",
-    }
+def _local_replay_candidates(platform: str, tier: str) -> list[Path]:
+    paths = [replay_result_path(platform, tier)]
+    if tier == "medium":
+        paths.append(legacy_replay_path(platform))
+    return paths
+
+
+def _local_live_candidates(platform: str, tier: str) -> list[Path]:
+    paths = [replay_live_path(platform, tier)]
+    if tier == "medium":
+        paths.append(RESULTS / platform / "live.json")
+    return paths
 
 
 class ResultsBackend:
@@ -55,28 +73,77 @@ class ResultsBackend:
             return None
         return await asyncio.to_thread(fn)
 
-    async def get_replay(self, platform: str) -> tuple[dict[str, Any] | None, str]:
-        gcs_path = ""
-        if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
-            gcs_path = f"gs://{self.gcs.settings.bucket}/{latest_replay_object(platform, self.gcs.settings)}"
-            replay = await self._gcs_read(lambda p=platform: self.gcs.read_replay(p))  # type: ignore[union-attr]
-            if replay is not None or self.source == "gcs":
-                return replay, gcs_path
+    async def _load_local_replays(self, platform: str) -> dict[str, dict[str, Any]]:
+        found: dict[str, dict[str, Any]] = {}
+        for tier in workload_tier_ids():
+            for path in _local_replay_candidates(platform, tier):
+                replay = _read_json(path)
+                if replay is not None:
+                    found[tier] = replay
+                    break
+        return found
 
-        paths = _local_paths(platform)
-        replay = _read_json(paths["replay"])
-        return replay, str(paths["replay"].relative_to(ROOT))
+    async def _load_gcs_replays(self, platform: str) -> dict[str, dict[str, Any]]:
+        found: dict[str, dict[str, Any]] = {}
+        if not self.gcs or not self.gcs.enabled:
+            return found
+        for tier in workload_tier_ids():
+            replay = await self._gcs_read(
+                lambda p=platform, t=tier: self.gcs.read_replay(p, t)  # type: ignore[union-attr]
+            )
+            if replay is not None:
+                found[tier] = replay
+        return found
 
-    async def get_live(self, platform: str) -> tuple[dict[str, Any] | None, str]:
+    async def get_replay(
+        self,
+        platform: str,
+        tier: str | None = None,
+    ) -> tuple[dict[str, Any] | None, str, bool, str]:
+        """Return replay for tier, projecting from nearest measured tier if needed."""
+        cfg = load_config()
+        tier = tier or default_workload(cfg)
+        replays: dict[str, dict[str, Any]] = {}
+
         if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
-            live = await self._gcs_read(lambda p=platform: self.gcs.read_live(p))  # type: ignore[union-attr]
+            replays.update(await self._load_gcs_replays(platform))
+        if self.source in ("local", "auto"):
+            replays.update(await self._load_local_replays(platform))
+
+        replay, source_tier, projected = resolve_tier_replay(replays, tier, platform, cfg)
+        if replay is not None:
+            if self.gcs and self.gcs.enabled:
+                path = f"gs://{self.gcs.settings.bucket}/{latest_replay_object(platform, self.gcs.settings, tier=tier)}"
+            else:
+                path = str(replay_result_path(platform, tier).relative_to(ROOT))
+            if projected:
+                path = f"{path} (projected from {source_tier})"
+            return replay, path, projected, tier
+
+        if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
+            gcs_path = f"gs://{self.gcs.settings.bucket}/{latest_replay_object(platform, self.gcs.settings, tier=tier)}"
+            if self.source == "gcs":
+                return None, gcs_path, False, tier
+
+        local_path = replay_result_path(platform, tier)
+        return None, str(local_path.relative_to(ROOT)), False, tier
+
+    async def get_live(self, platform: str, tier: str | None = None) -> tuple[dict[str, Any] | None, str]:
+        tier = tier or default_workload()
+        if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
+            live = await self._gcs_read(
+                lambda p=platform, t=tier: self.gcs.read_live(p, t)  # type: ignore[union-attr]
+            )
             if live is not None or self.source == "gcs":
-                obj = f"gs://{self.gcs.settings.bucket}/{self.gcs.settings.prefix}/{platform}/live.json"
+                obj = f"gs://{self.gcs.settings.bucket}/{self.gcs.settings.prefix}/{tier}/{platform}/live.json"
                 return live, obj
 
-        paths = _local_paths(platform)
-        live = _read_json(paths["live"])
-        return live, str(paths["live"].relative_to(ROOT))
+        for path in _local_live_candidates(platform, tier):
+            live = _read_json(path)
+            if live is not None:
+                return live, str(path.relative_to(ROOT))
+        fallback = _local_live_candidates(platform, tier)[0]
+        return None, str(fallback.relative_to(ROOT))
 
     async def get_comparison(self) -> dict[str, Any] | None:
         if self.gcs and self.gcs.enabled and self.source in ("gcs", "auto"):
@@ -95,7 +162,11 @@ def _render_index() -> str:
     """Serve index.html with hardware specs embedded from benchmark_config.yaml."""
     index = FRONTEND / "index.html"
     text = index.read_text(encoding="utf-8")
-    specs = json.dumps(node_pool_specs(load_config()))
+    specs = json.dumps({
+        "hardware": node_pool_specs(load_config()),
+        "workloads": workloads_catalog(load_config()),
+        "default_workload": default_workload(load_config()),
+    })
     tag = f'<script id="embedded-hardware-specs" type="application/json">{specs}</script>'
     marker = "<!-- hardware-specs -->"
     if marker in text:
@@ -124,19 +195,29 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "manifest": manifest,
         })
 
+    async def handle_workloads(_request: web.Request) -> web.Response:
+        cfg = load_config()
+        return web.json_response({
+            "default": default_workload(cfg),
+            "tiers": workloads_catalog(cfg),
+        })
+
     async def handle_results(request: web.Request) -> web.Response:
         platform = request.match_info["platform"]
         if platform not in PLATFORMS:
             raise web.HTTPBadRequest(text=f"platform must be one of {PLATFORMS}")
         backend: ResultsBackend = request.app["backend"]
+        tier = request.rel_url.query.get("workload") or request.rel_url.query.get("tier")
 
-        replay, replay_path = await backend.get_replay(platform)
-        live, live_path = await backend.get_live(platform)
+        replay, replay_path, projected, resolved_tier = await backend.get_replay(platform, tier)
+        live, live_path = await backend.get_live(platform, resolved_tier)
         cost_metrics = None
         if replay:
-            cost_metrics = compute_replay_cost_metrics(replay, platform)
+            cost_metrics = replay.get("cost_metrics") or compute_replay_cost_metrics(replay, platform)
         payload = {
             "platform": platform,
+            "workload_tier": resolved_tier,
+            "projected": projected,
             "data_source": backend.data_source,
             "replay_path": replay_path,
             "live_path": live_path,
@@ -168,11 +249,13 @@ def build_app(backend: ResultsBackend) -> web.Application:
 
     async def handle_compare(request: web.Request) -> web.Response:
         backend: ResultsBackend = request.app["backend"]
+        tier = request.rel_url.query.get("workload") or request.rel_url.query.get("tier")
         comparison = await backend.get_comparison()
-        tpu_replay, _ = await backend.get_replay("tpu")
-        gpu_replay, _ = await backend.get_replay("gpu")
+        tpu_replay, _, _, tpu_tier = await backend.get_replay("tpu", tier)
+        gpu_replay, _, _, gpu_tier = await backend.get_replay("gpu", tier)
         return web.json_response({
             "data_source": backend.data_source,
+            "workload_tier": tpu_tier,
             "comparison": comparison,
             "tpu": tpu_replay,
             "gpu": gpu_replay,
@@ -180,6 +263,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
 
     app.router.add_get("/", handle_index)
     app.router.add_get("/api/status", handle_status)
+    app.router.add_get("/api/workloads", handle_workloads)
     app.router.add_get("/api/results/{platform}", handle_results)
     app.router.add_get("/api/hardware", handle_hardware)
     app.router.add_get("/api/migration", handle_migration)
