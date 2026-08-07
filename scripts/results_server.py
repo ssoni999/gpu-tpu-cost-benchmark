@@ -91,15 +91,26 @@ class ResultsBackend:
         return {}
 
 
+def _render_index() -> str:
+    """Serve index.html with hardware specs embedded from benchmark_config.yaml."""
+    index = FRONTEND / "index.html"
+    text = index.read_text(encoding="utf-8")
+    specs = json.dumps(node_pool_specs(load_config()))
+    tag = f'<script id="embedded-hardware-specs" type="application/json">{specs}</script>'
+    marker = "<!-- hardware-specs -->"
+    if marker in text:
+        return text.replace(marker, tag, 1)
+    return text.replace("</head>", f"  {tag}\n</head>", 1)
+
+
 def build_app(backend: ResultsBackend) -> web.Application:
     app = web.Application()
     app["backend"] = backend
 
     async def handle_index(_request: web.Request) -> web.Response:
-        index = FRONTEND / "index.html"
-        if not index.exists():
+        if not (FRONTEND / "index.html").exists():
             raise web.HTTPNotFound(text="frontend/index.html missing")
-        return web.Response(text=index.read_text(encoding="utf-8"), content_type="text/html")
+        return web.Response(text=_render_index(), content_type="text/html")
 
     async def handle_status(_request: web.Request) -> web.Response:
         backend: ResultsBackend = _request.app["backend"]

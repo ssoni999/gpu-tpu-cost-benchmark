@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>GPU vs TPU Benchmark Results</title>
+  <!-- hardware-specs -->
   <style>
     :root {
       --bg: #f4f5f7;
@@ -343,6 +344,95 @@
       return `<div class="spec-row"><span class="k">${k}</span><span class="v">${display}${unit && display !== '—' ? ' ' + unit : ''}</span></div>`;
     }
 
+    /** Benchmark defaults — fills sidebar when API/config paths are unavailable. */
+    const PLATFORM_DEFAULTS = {
+      gpu: {
+        infrastructure: 'GPU (T4)',
+        node_pool_name: 'gpu-pool',
+        node_count: 1,
+        accelerator: 'nvidia-tesla-t4',
+        accelerator_count: 1,
+        machine_type: 'n1-standard-4',
+        vcpu: 4,
+        system_memory_gib: 15,
+        accelerator_memory_gib: 16,
+        peak_tflops: 65,
+        power_watts: 70,
+        interconnect: 'PCIe 3.0 x16',
+        network_gbps: 32,
+        hourly_cost_usd: 0.45,
+        docker_image: 'vllm/vllm-openai:latest',
+        framework: 'vllm',
+      },
+      tpu: {
+        infrastructure: 'TPU v5e',
+        node_pool_name: 'tpu-v5-lite-podslice',
+        node_count: 1,
+        accelerator: 'v5litepod-1',
+        accelerator_count: 1,
+        machine_type: 'v5e-1x1 (CT5LP)',
+        vcpu: 24,
+        system_memory_gib: 48,
+        accelerator_memory_gib: 16,
+        peak_tflops: 197,
+        power_watts: 200,
+        interconnect: 'ICI (400 Gbps/chip)',
+        network_gbps: 100,
+        hourly_cost_usd: 1.20,
+        docker_image: 'vllm/vllm-tpu:latest',
+        framework: 'vllm',
+      },
+    };
+
+    const HW_SPEC_KEYS = [
+      'infrastructure', 'accelerator', 'accelerator_count', 'peak_tflops',
+      'power_watts', 'hourly_cost_usd', 'machine_type', 'node_pool_name',
+      'node_count', 'vcpu', 'system_memory_gib', 'accelerator_memory_gib',
+      'interconnect', 'network_gbps', 'docker_image', 'framework',
+    ];
+
+    function mergeHardwareEntry(...entries) {
+      const out = {};
+      for (const key of HW_SPEC_KEYS) {
+        for (const e of entries) {
+          const v = e?.[key];
+          if (v !== undefined && v !== null && v !== '') {
+            out[key] = v;
+            break;
+          }
+        }
+      }
+      return Object.keys(out).length ? out : null;
+    }
+
+    /** Pull specs from replay JSON + cost metrics (same source as the main panels). */
+    function hardwareFromResults(data) {
+      const r = data?.replay;
+      if (!r) return null;
+      const pc = r.platform_config || {};
+      const pool = pc.node_pool || {};
+      const hw = r.hardware_utilization || {};
+      const cm = data.cost_metrics || r.cost_metrics || {};
+      return {
+        infrastructure: r.infrastructure,
+        docker_image: pc.docker_image,
+        framework: pc.framework,
+        node_pool_name: pool.name,
+        node_count: pool.node_count ?? 1,
+        accelerator: pc.accelerator,
+        accelerator_count: pc.accelerator_count ?? 1,
+        machine_type: pool.machine_type || pc.machine_type,
+        vcpu: pool.vcpu,
+        system_memory_gib: pool.system_memory_gib,
+        accelerator_memory_gib: pool.accelerator_memory_gib,
+        peak_tflops: hw.peak_tflops ?? pc.peak_tflops,
+        power_watts: cm.power_watts ?? pool.power_watts ?? pc.power_watts,
+        interconnect: pool.interconnect || pool.topology,
+        network_gbps: pool.network_gbps,
+        hourly_cost_usd: cm.hourly_cost_usd,
+      };
+    }
+
     function hardwareFromMigration(migRes) {
       const build = (platform) => {
         const m = migRes?.[platform];
@@ -363,39 +453,57 @@
           interconnect: p.interconnect || p.topology,
           network_gbps: p.network_gbps,
           hourly_cost_usd: null,
+          docker_image: m.docker_image,
+          framework: m.framework,
         };
       };
       return { gpu: build('gpu'), tpu: build('tpu') };
     }
 
-    function resolveHardware(hwRes, migRes) {
-      if (hwRes?.gpu?.node_pool_name || hwRes?.gpu?.accelerator) return hwRes;
-      if (migRes?.hardware?.gpu) return migRes.hardware;
-      return hardwareFromMigration(migRes);
+    function embeddedHardware() {
+      const el = document.getElementById('embedded-hardware-specs');
+      if (!el) return null;
+      try {
+        return JSON.parse(el.textContent);
+      } catch {
+        return null;
+      }
+    }
+
+    function resolveAllHardware(gpuRes, tpuRes, hwRes, migRes) {
+      const embedded = embeddedHardware();
+      const migBuilt = hardwareFromMigration(migRes);
+      const build = (platform, data) => mergeHardwareEntry(
+        hardwareFromResults(data),
+        embedded?.[platform],
+        hwRes?.[platform],
+        migRes?.hardware?.[platform],
+        migBuilt?.[platform],
+        PLATFORM_DEFAULTS[platform],
+      );
+      return { gpu: build('gpu', gpuRes), tpu: build('tpu', tpuRes) };
     }
 
     function renderHardwareSpecs(hardware) {
       const render = (platform, elId) => {
-        const h = hardware?.[platform];
+        const h = hardware?.[platform] || PLATFORM_DEFAULTS[platform];
         const el = document.getElementById(elId);
-        if (!h) {
-          el.innerHTML = '<div class="spec-row"><span class="k">Status</span><span class="v">Restart UI: git pull && make ui</span></div>';
-          return;
-        }
         el.innerHTML = [
-          specRow('Pool name', h.node_pool_name),
-          specRow('Nodes', h.node_count),
+          specRow('Infrastructure', h.infrastructure),
           specRow('Accelerator', h.accelerator),
           specRow('Chips / node', h.accelerator_count),
+          specRow('Peak compute', h.peak_tflops, 'TFLOPS'),
+          specRow('Power (TDP)', h.power_watts, 'W'),
+          specRow('Hourly cost', h.hourly_cost_usd != null ? '$' + Number(h.hourly_cost_usd).toFixed(2) : null),
           specRow('Machine type', h.machine_type),
+          specRow('Pool name', h.node_pool_name),
           specRow('vCPU', h.vcpu),
           specRow('System memory', h.system_memory_gib, 'GiB'),
           specRow('Accel memory', h.accelerator_memory_gib, 'GiB'),
-          specRow('Peak compute', h.peak_tflops, 'TFLOPS'),
-          specRow('Power (TDP)', h.power_watts, 'W'),
           specRow('Interconnect', h.interconnect),
           specRow('Network', h.network_gbps, 'Gbps'),
-          specRow('Hourly cost', h.hourly_cost_usd != null ? '$' + Number(h.hourly_cost_usd).toFixed(2) : null),
+          specRow('Framework', h.framework),
+          specRow('Image', h.docker_image),
         ].join('');
       };
       render('gpu', 'gpu-specs');
@@ -555,7 +663,7 @@
         ]);
         panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
         renderCompare(tpuRes, gpuRes);
-        renderHardwareSpecs(resolveHardware(hwRes, migRes));
+        renderHardwareSpecs(resolveAllHardware(gpuRes, tpuRes, hwRes, migRes));
         const src = statusRes.data_source || 'local';
         const bucket = statusRes.gcs_bucket ? `gs://${statusRes.gcs_bucket}/${statusRes.gcs_prefix || 'latest'}` : '';
         const manifestAt = statusRes.manifest?.updated_at;
@@ -580,6 +688,8 @@
       clearInterval(timer);
       timer = setInterval(load, 3000);
     }
+
+    renderHardwareSpecs({ gpu: PLATFORM_DEFAULTS.gpu, tpu: PLATFORM_DEFAULTS.tpu });
 
     load();
     startAuto();
