@@ -914,27 +914,46 @@
       return workloadCatalog.find(w => w.id === tierId) || { id: tierId, label: tierId };
     }
 
-    function renderWorkloadToggle() {
+    function buildWorkloadToggle() {
       if (!workloadCatalog.length) return;
       workloadToggleEl.innerHTML = workloadCatalog.map(w => `
         <button type="button" class="workload-btn${w.id === currentWorkload ? ' active' : ''}" data-tier="${w.id}">
           ${w.label}
         </button>
       `).join('');
+      updateWorkloadDesc();
+    }
+
+    function updateWorkloadToggleActive() {
       workloadToggleEl.querySelectorAll('.workload-btn').forEach(btn => {
-        btn.onclick = () => {
-          currentWorkload = btn.dataset.tier;
-          localStorage.setItem('bench-workload', currentWorkload);
-          renderWorkloadToggle();
-          load();
-        };
+        btn.classList.toggle('active', btn.dataset.tier === currentWorkload);
       });
+      updateWorkloadDesc();
+    }
+
+    function updateWorkloadDesc() {
       const w = workloadMeta(currentWorkload);
       workloadDescEl.innerHTML = [
         w.description || '',
         w.analogy ? `<br><em>Analogy: ${w.analogy}</em>` : '',
         w.num_prompts ? `<br><em>${w.num_prompts} prompts · ${w.input_tokens} in / ${w.output_tokens} out tok</em>` : '',
       ].join('');
+    }
+
+    if (!workloadToggleEl.dataset.bound) {
+      workloadToggleEl.dataset.bound = '1';
+      workloadToggleEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('.workload-btn');
+        if (!btn || btn.dataset.tier === currentWorkload) return;
+        currentWorkload = btn.dataset.tier;
+        localStorage.setItem('bench-workload', currentWorkload);
+        updateWorkloadToggleActive();
+        load();
+      });
+    }
+
+    function renderWorkloadToggle() {
+      buildWorkloadToggle();
     }
 
     async function initWorkloads() {
@@ -958,8 +977,11 @@
       renderWorkloadToggle();
     }
 
-    function resultsUrl(platform) {
-      return `/api/results/${platform}?workload=${encodeURIComponent(currentWorkload)}&_=${Date.now()}`;
+    let loadSeq = 0;
+
+    function resultsUrl(platform, tier) {
+      const w = tier || currentWorkload;
+      return `/api/results/${platform}?workload=${encodeURIComponent(w)}&_=${Date.now()}`;
     }
 
     function renderPanel(platform, data, otherData) {
@@ -1012,9 +1034,9 @@
         return `<div class="error-banner"><strong>All ${es.total_failures} requests failed</strong> — metrics are zero until replay succeeds.<ul class="error-list">${items}</ul></div>`;
       })();
 
-      const measuredTier = r?.benchmark_contract?.workload_tier || r?.workload_tier || data.workload_tier;
-      const tierLabel = workloadMeta(measuredTier).label || measuredTier;
       const requestedTier = data.requested_tier || currentWorkload;
+      const measuredTier = r?.benchmark_contract?.workload_tier || r?.workload_tier || data.workload_tier;
+      const tierLabel = workloadMeta(requestedTier).label || requestedTier;
       const tierMismatch = measuredTier && requestedTier && measuredTier !== requestedTier;
       const projectedBadge = data.projected
         ? `<span class="projected-badge" title="Estimated from ${r?.projected_from_tier || 'measured'} replay — run make replay TIER=${requestedTier} for real numbers">Projected · ${tierLabel}</span>`
@@ -1109,15 +1131,18 @@
     }
 
     async function load() {
+      const seq = ++loadSeq;
+      const tier = currentWorkload;
       try {
         const [tpuRes, gpuRes, migRes, statusRes, hwRes] = await Promise.all([
-          fetch(resultsUrl('tpu')).then(r => r.json()),
-          fetch(resultsUrl('gpu')).then(r => r.json()),
+          fetch(resultsUrl('tpu', tier)).then(r => r.json()),
+          fetch(resultsUrl('gpu', tier)).then(r => r.json()),
           fetch('/api/migration').then(r => r.json()),
           fetch('/api/status').then(r => r.json()),
           fetch('/api/hardware').then(r => r.ok ? r.json() : null).catch(() => null),
         ]);
-        renderWorkloadToggle();
+        if (seq !== loadSeq) return;
+        updateWorkloadToggleActive();
         window.__gcsError = statusRes.gcs_error || null;
         panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
         renderCompare(tpuRes, gpuRes);
@@ -1128,13 +1153,17 @@
         const manifestAt = statusRes.manifest?.updated_at;
         const availTpu = (tpuRes.available_tiers || []).join(', ') || 'none';
         const availGpu = (gpuRes.available_tiers || []).join(', ') || 'none';
-        const tpuSrc = tpuRes.replay_source || statusRes.tier_sources?.tpu?.[currentWorkload] || '—';
-        const gpuSrc = gpuRes.replay_source || statusRes.tier_sources?.gpu?.[currentWorkload] || '—';
+        const tpuSrc = tpuRes.replay_source || statusRes.tier_sources?.tpu?.[tier] || '—';
+        const gpuSrc = gpuRes.replay_source || statusRes.tier_sources?.gpu?.[tier] || '—';
         const tpuPath = tpuRes.replay_path || '';
-        const gpuPath = gpuRes.replay_path || '';
+        const tpuTok = tpuRes.replay?.output_tokens_per_second;
+        const gpuTok = gpuRes.replay?.output_tokens_per_second;
         document.getElementById('data-source').textContent =
           (gcsErr ? `GCS ERROR: ${gcsErr} · ` : '')
-          + `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''} · workload: ${currentWorkload} · tpu: ${tpuSrc} (${availTpu}) · gpu: ${gpuSrc} (${availGpu})${tpuPath ? ' · ' + tpuPath.split('/').slice(-4).join('/') : ''}`;
+          + `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''}`
+          + ` · tier: ${tier}${tpuTok != null ? ' · tpu ' + fmt(tpuTok, 1) + ' tok/s' : ''}${gpuTok != null ? ' · gpu ' + fmt(gpuTok, 1) + ' tok/s' : ''}`
+          + ` · tpu: ${tpuSrc} (${availTpu}) · gpu: ${gpuSrc} (${availGpu})`
+          + `${tpuPath ? ' · ' + tpuPath.split('/').slice(-4).join('/') : ''}`;
         updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
         updatedEl.className = 'pill';
       } catch (e) {

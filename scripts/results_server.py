@@ -255,6 +255,7 @@ class ResultsBackend:
 
         # GCS-only: fetch the exact tier object every time (latest/{tier}/{platform}/...).
         if self.source == "gcs" and self.gcs and self.gcs.enabled:
+            self.gcs._cache.clear()
             result = await self._gcs_read(
                 lambda p=platform, t=tier: self.gcs.read_replay_object(p, t)  # type: ignore[union-attr]
             )
@@ -357,6 +358,16 @@ def _render_index() -> str:
 def build_app(backend: ResultsBackend) -> web.Application:
     app = web.Application()
     app["backend"] = backend
+
+    @web.middleware
+    async def no_cache_api(request: web.Request, handler):
+        response = await handler(request)
+        if request.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+        return response
+
+    app.middlewares.append(no_cache_api)
 
     async def handle_index(_request: web.Request) -> web.Response:
         if not (FRONTEND / "index.html").exists():
