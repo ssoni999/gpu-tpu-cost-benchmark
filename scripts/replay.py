@@ -28,6 +28,7 @@ from config import (
     replay_live_path,
     workload_profile,
     workload_trace_path,
+    resolve_workload_trace_path,
 )
 from cost_metrics import compute_replay_cost_metrics
 from gcs_results import try_upload_replay
@@ -813,9 +814,7 @@ def main() -> int:
 
     tier = args.tier or default_workload(cfg)
 
-    trace_path = Path(args.trace)
-    if tier and str(args.trace) == "workload/prompts.jsonl":
-        trace_path = workload_trace_path(tier)
+    trace_path = resolve_workload_trace_path(tier, args.trace)
     if not trace_path.exists():
         print(f"Trace not found: {trace_path}. Run: make trace TIER={tier}", file=sys.stderr)
         return 1

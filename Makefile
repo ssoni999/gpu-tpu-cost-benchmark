@@ -3,7 +3,7 @@
 ROOT := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
 PYTHONPATH=scripts
 TIER ?= medium
-TRACE ?= workload/$(TIER)/prompts.jsonl
+TRACE ?= $(shell PYTHONPATH=scripts python3 -c "from config import workload_trace_path; print(workload_trace_path('$(TIER)'))")
 REPLAY_OUT ?= results/$(PLATFORM)/$(TIER)/run_01_replay.json
 MODEL ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['model'])")
 WARMUP ?= $(shell PYTHONPATH=scripts python3 -c "from config import load_config; print(load_config()['benchmark']['warmup_requests'])")
@@ -47,7 +47,7 @@ trace:
 trace-all:
 	@for t in small medium high; do \
 		echo "=== trace $$t ==="; \
-		$(MAKE) trace TIER=$$t TRACE=workload/$$t/prompts.jsonl || exit 1; \
+		$(MAKE) trace TIER=$$t || exit 1; \
 	done
 
 replay-all:

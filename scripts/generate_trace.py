@@ -10,7 +10,7 @@ import secrets
 import time
 from pathlib import Path
 
-from config import default_workload, load_config, workload_profile, workload_trace_meta_path, workload_trace_path
+from config import default_workload, load_config, resolve_workload_trace_path, workload_profile, workload_trace_meta_path, workload_trace_path
 from prompt_catalog import SHARED_HANDBOOK, build_user_prompt
 
 
@@ -229,9 +229,7 @@ def main() -> None:
         max_model_len=max_model_len,
     )
 
-    output = Path(args.output)
-    if tier and str(args.output) == "workload/prompts.jsonl":
-        output = workload_trace_path(tier)
+    output = resolve_workload_trace_path(tier, args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     with output.open("w", encoding="utf-8") as f:
         for record in records:

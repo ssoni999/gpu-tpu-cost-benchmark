@@ -52,15 +52,20 @@ def workload_profile(cfg: dict[str, Any] | None, tier: str) -> dict[str, Any]:
 
 
 def _trace_implies_tier(trace: str, cfg: dict[str, Any] | None = None) -> str | None:
-    """Infer workload tier from trace path (workload/small/prompts.jsonl, etc.)."""
+    """Infer workload tier from trace path (workload/small/prompts.jsonl, trace_file overrides, etc.)."""
     cfg = cfg or load_config()
     if not trace:
         return None
+    normalized = trace.replace("\\", "/")
     for tier_id in workload_tier_ids(cfg):
-        if f"workload/{tier_id}/" in trace:
+        profile = workload_profile(cfg, tier_id)
+        trace_file = profile.get("trace_file")
+        if trace_file and trace_file.replace("\\", "/") in normalized:
             return tier_id
-    if "workload/prompts.jsonl" in trace:
-        return "medium"
+        if f"workload/{tier_id}/" in normalized:
+            return tier_id
+    if "workload/prompts.jsonl" in normalized:
+        return "small"
     return None
 
 
@@ -95,7 +100,34 @@ def replay_matches_tier(replay: dict[str, Any], tier: str, cfg: dict[str, Any] |
 
 def workload_trace_path(tier: str, root: Path | None = None) -> Path:
     root = root or ROOT
+    cfg = load_config()
+    profile = workload_profile(cfg, tier)
+    trace_file = profile.get("trace_file")
+    if trace_file:
+        path = Path(trace_file)
+        return path if path.is_absolute() else root / trace_file
     return root / "workload" / tier / "prompts.jsonl"
+
+
+def resolve_workload_trace_path(tier: str | None, given: str | Path, root: Path | None = None) -> Path:
+    """Map default/canonical trace paths to the tier's configured trace file."""
+    root = root or ROOT
+    given_path = Path(given)
+    if not given_path.is_absolute():
+        given_path = root / given_path
+    if not tier:
+        return given_path
+    canonical = workload_trace_path(tier, root)
+    rel = str(given).replace("\\", "/")
+    defaults = {"workload/prompts.jsonl", f"workload/{tier}/prompts.jsonl"}
+    if rel in defaults:
+        return canonical
+    try:
+        if given_path.resolve() == canonical.resolve():
+            return canonical
+    except OSError:
+        pass
+    return given_path
 
 
 def workload_trace_meta_path(tier: str, root: Path | None = None) -> Path:
@@ -132,6 +164,7 @@ def workloads_catalog(cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]
             "num_prompts": profile.get("num_prompts"),
             "input_tokens": profile.get("input_tokens"),
             "output_tokens": profile.get("output_tokens"),
+            "trace_file": profile.get("trace_file"),
             "total_tokens_per_run": (
                 int(profile.get("num_prompts", 0))
                 * (int(profile.get("input_tokens", 0)) + int(profile.get("output_tokens", 0)))
