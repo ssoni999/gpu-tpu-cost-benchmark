@@ -61,21 +61,21 @@ slo:
 
 gpu:
   platform: gpu
-  accelerator: nvidia-tesla-t4
+  accelerator: nvidia-l4
   accelerator_count: 1
-  machine_type: n1-standard-4
-  power_watts: 70
+  machine_type: g2-standard-4
+  power_watts: 72
   framework: vllm
-  peak_tflops: 65
+  peak_tflops: 242
   node_pool:
-    name: gpu-pool
+    name: gpu-l4-pool
     node_count: 1
-    machine_type: n1-standard-4
+    machine_type: g2-standard-4
     vcpu: 4
-    system_memory_gib: 15
-    accelerator_memory_gib: 16
-    power_watts: 70
-    interconnect: PCIe 3.0 x16
+    system_memory_gib: 16
+    accelerator_memory_gib: 24
+    power_watts: 72
+    interconnect: PCIe 4.0 x16
     network_gbps: 32
   docker_image: vllm/vllm-openai:latest
   recipe_ref: ../gpu-recipes/inference/g4/single-host-serving/vllm/README.md
@@ -85,10 +85,10 @@ gpu:
     app_label: tiny-model-gpu-server
     container_name: vllm-gpu
     port: 8000
-    output_file: tiny-model-gpu.yaml
+    output_file: tiny-model-l4-gpu.yaml
   infra:
     node_selector:
-      cloud.google.com/gke-accelerator: nvidia-t4
+      cloud.google.com/gke-accelerator: nvidia-l4
     tolerations:
       - key: nvidia.com/gpu
         operator: Exists
@@ -164,13 +164,21 @@ tpu:
 pricing:
   # Defaults for UI cost metrics when results/{platform}/run_01_environment.json is absent.
   # Override at runtime via gpu.env / tpu.env → environment.json.
-  gpu_accelerator_hourly_usd: 0.35
-  gpu_vm_hourly_usd: 0.10
+  gpu_accelerator_hourly_usd: 0.52
+  gpu_vm_hourly_usd: 0.19
   tpu_accelerator_hourly_usd: 1.20
   tpu_vm_hourly_usd: 0.0
-  gpu_tdp_watts: 70          # NVIDIA T4 chip TDP (approx)
+  gpu_tdp_watts: 72          # NVIDIA L4 chip TDP (approx)
   tpu_tdp_watts: 200         # TPU v5e single chip (approx)
 
+# pricing:
+#   # Spot pricing defaults for NVIDIA L4 on GCP (us-central1)
+#   gpu_accelerator_hourly_usd: 0.22   # Spot hourly price for 1x NVIDIA L4 GPU chip
+#   gpu_vm_hourly_usd: 0.05            # Spot hourly price for base 4 vCPU / 16GB RAM compute
+#   tpu_accelerator_hourly_usd: 0.36   # Spot hourly price for 1x TPU v5e chip (approx.)
+#   tpu_vm_hourly_usd: 0.0
+#   gpu_tdp_watts: 72                  # NVIDIA L4 chip TDP (72W)
+#   tpu_tdp_watts: 200                 # TPU v5e single chip (approx)
 storage:
   gcs:
     bucket: gpu-tpu-benchmark-storage

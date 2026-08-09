@@ -40,14 +40,14 @@ from dashboard_client import LiveDashboard
 
 PEAK_TFLOPS_DEFAULTS: dict[str, float] = {
     "TPU v5e": 197.0,
-    "GPU (L4)": 121.0,
+    "GPU (L4)": 242.0,
     "GPU (T4)": 65.0,
     "Generic": 100.0,
 }
 
 PLATFORM_INFRA: dict[str, tuple[str, float]] = {
     "tpu": ("TPU v5e", PEAK_TFLOPS_DEFAULTS["TPU v5e"]),
-    "gpu": ("GPU (T4)", PEAK_TFLOPS_DEFAULTS["GPU (T4)"]),
+    "gpu": ("GPU (L4)", PEAK_TFLOPS_DEFAULTS["GPU (L4)"]),
 }
 
 

@@ -1,0 +1,160 @@
+{
+  "source": "trace_replay",
+  "target": "http://127.0.0.1:8000",
+  "model": "Qwen/Qwen2.5-0.5B-Instruct",
+  "trace": "/home/meghna_pusala/gpu-tpu-cost-benchmark/workload/prompts.jsonl",
+  "infrastructure": "GPU (L4)",
+  "wall_time_s": 6.97,
+  "successful_requests": 100,
+  "failed_requests": 0,
+  "benchmark_duration_seconds": 6.97,
+  "total_input_tokens": 119230,
+  "total_generated_tokens": 12501,
+  "requests_per_second": 14.3482,
+  "output_tokens_per_second": 1793.67,
+  "throughput_tok_s": 18901.1,
+  "generation_tok_s": 1793.7,
+  "latency_ms": {
+    "p50": 1742.0,
+    "p95": 2277.5,
+    "p99": 2330.1,
+    "avg": 1769.7
+  },
+  "ttft_ms": {
+    "p50": 449.1,
+    "p95": 645.8,
+    "p99": 822.0
+  },
+  "itl_ms": {
+    "avg": 10.26,
+    "p50": 10.1,
+    "p95": 14.5
+  },
+  "median_ttft_ms": 449.1,
+  "p95_ttft_ms": 645.8,
+  "p99_ttft_ms": 822.0,
+  "hardware_utilization": {
+    "model_params_b": 0.49,
+    "peak_tflops": 242.0,
+    "achieved_tflops": 1.7578,
+    "mfu_percent": 0.73
+  },
+  "server_metrics": {
+    "endpoint_status": "success",
+    "peak_kv_cache_usage_pct": 1.87,
+    "prefix_cache_hit_rate_pct": 18.71,
+    "prefix_cache_queries": 444929,
+    "prefix_cache_hits": 83232,
+    "peak_queued_requests": 0.0,
+    "peak_running_requests": 32.0,
+    "samples_collected": 29,
+    "final_snapshot": {
+      "status": "success",
+      "kv_usage_pct": 0.0,
+      "queued_requests": 0.0,
+      "running_requests": 0.0,
+      "prefix_hit_rate_pct": 18.706804905951284,
+      "prefix_queries": 444929.0,
+      "prefix_hits": 83232.0
+    }
+  },
+  "platform": "gpu",
+  "workload_tier": "small",
+  "platform_config": {
+    "platform": "gpu",
+    "accelerator": "nvidia-l4",
+    "accelerator_count": 1,
+    "generation": null,
+    "runtime_version": null,
+    "machine_type": "g2-standard-4",
+    "peak_tflops": 242,
+    "power_watts": 72,
+    "framework": "vllm",
+    "docker_image": "vllm/vllm-openai:latest",
+    "recipe_ref": "../gpu-recipes/inference/g4/single-host-serving/vllm/README.md",
+    "node_pool": {
+      "name": "gpu-l4-pool",
+      "node_count": 1,
+      "machine_type": "g2-standard-4",
+      "vcpu": 4,
+      "system_memory_gib": 16,
+      "accelerator_memory_gib": 24,
+      "power_watts": 72,
+      "interconnect": "PCIe 4.0 x16",
+      "network_gbps": 32
+    },
+    "k8s": {
+      "deployment_name": "tiny-model-gpu-server",
+      "service_name": "tiny-model-gpu-service",
+      "app_label": "tiny-model-gpu-server",
+      "container_name": "vllm-gpu",
+      "port": 8000,
+      "output_file": "tiny-model-l4-gpu.yaml"
+    },
+    "infra": {
+      "node_selector": {
+        "cloud.google.com/gke-accelerator": "nvidia-l4"
+      },
+      "tolerations": [
+        {
+          "key": "nvidia.com/gpu",
+          "operator": "Exists",
+          "effect": "NoSchedule"
+        }
+      ],
+      "resources": {
+        "requests": {
+          "cpu": "2",
+          "memory": "8Gi",
+          "nvidia.com/gpu": 1
+        },
+        "limits": {
+          "nvidia.com/gpu": 1
+        }
+      }
+    },
+    "serving": {
+      "max_model_len": 4096,
+      "max_num_batched_tokens": 4096,
+      "max_num_seqs": 128,
+      "tensor_parallel_size": 1,
+      "gpu_memory_utilization": 0.95,
+      "extra_args": [
+        "--served-model-name=Qwen/Qwen2.5-0.5B-Instruct",
+        "--host=0.0.0.0"
+      ]
+    },
+    "vllm_args": [
+      "--model=Qwen/Qwen2.5-0.5B-Instruct",
+      "--max-model-len=4096",
+      "--max-num-batched-tokens=4096",
+      "--max-num-seqs=128",
+      "--tensor-parallel-size=1",
+      "--gpu-memory-utilization=0.95",
+      "--port=8000",
+      "--served-model-name=Qwen/Qwen2.5-0.5B-Instruct",
+      "--host=0.0.0.0"
+    ]
+  },
+  "benchmark_contract": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "trace": "/home/meghna_pusala/gpu-tpu-cost-benchmark/workload/prompts.jsonl",
+    "workload_tier": "small",
+    "num_requests": 100,
+    "input_tokens": 1024,
+    "output_tokens": 128,
+    "seed": 100
+  },
+  "cost_metrics": {
+    "hourly_cost_usd": 0.71,
+    "run_cost_usd": 0.001375,
+    "cost_per_output_token_usd": 1.1e-07,
+    "cost_per_total_token_usd": 1e-08,
+    "cost_per_wall_second_usd": 0.000197,
+    "cost_per_million_output_tokens_usd": 0.11,
+    "performance_per_dollar_tok_s": 2526.3,
+    "performance_per_watt_tok_s": 24.9121,
+    "power_watts": 72.0,
+    "pricing_source": "config"
+  }
+}

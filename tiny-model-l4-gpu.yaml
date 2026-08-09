@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tiny-model-gpu-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tiny-model-gpu-server
+  template:
+    metadata:
+      labels:
+        app: tiny-model-gpu-server
+    spec:
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-l4
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: vllm-gpu
+        image: vllm/vllm-openai:latest
+        command:
+        - python3
+        - -m
+        - vllm.entrypoints.openai.api_server
+        args:
+        - --model=Qwen/Qwen2.5-0.5B-Instruct
+        - --max-model-len=4096
+        - --max-num-batched-tokens=4096
+        - --max-num-seqs=128
+        - --tensor-parallel-size=1
+        - --gpu-memory-utilization=0.95
+        - --port=8000
+        - --served-model-name=Qwen/Qwen2.5-0.5B-Instruct
+        - --host=0.0.0.0
+        ports:
+        - containerPort: 8000
+        resources:
+          requests:
+            cpu: '2'
+            memory: 8Gi
+            nvidia.com/gpu: 1
+          limits:
+            nvidia.com/gpu: 1
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tiny-model-gpu-service
+spec:
+  type: ClusterIP
+  selector:
+    app: tiny-model-gpu-server
+  ports:
+  - port: 8000
+    targetPort: 8000
