@@ -962,7 +962,7 @@
         dbg('H1', 'index.html:toggle', 'tier click', { prev, next: currentWorkload });
         // #endregion
         updateWorkloadToggleActive();
-        load();
+        load({ force: true });
       });
     }
 
@@ -992,6 +992,9 @@
     }
 
     let loadSeq = 0;
+    let loadInFlight = false;
+    let loadQueued = false;
+    let lastStatusRes = {};
 
     // #region agent log
     function dbg(hypothesisId, location, message, data) {
@@ -1154,68 +1157,90 @@
       compareBar.classList.add('visible');
     }
 
-    async function load() {
-      const seq = ++loadSeq;
-      const tier = currentWorkload;
-      // #region agent log
-      dbg('H2', 'index.html:load', 'load start', { seq, tier });
-      // #endregion
+    async function pollStatus() {
       try {
-        const [tpuRes, gpuRes, migRes, statusRes, hwRes] = await Promise.all([
-          fetch(resultsUrl('tpu', tier)).then(r => r.json()),
-          fetch(resultsUrl('gpu', tier)).then(r => r.json()),
-          fetch('/api/migration').then(r => r.json()),
-          fetch('/api/status').then(r => r.json()),
-          fetch('/api/hardware').then(r => r.ok ? r.json() : null).catch(() => null),
-        ]);
-        if (seq !== loadSeq) {
+        lastStatusRes = await fetch('/api/status').then(r => r.json());
+        window.__gcsError = lastStatusRes.gcs_error || null;
+      } catch {
+        /* keep previous status snapshot */
+      }
+    }
+
+    async function load(options = {}) {
+      const force = options.force === true;
+      if (loadInFlight) {
+        if (force) loadQueued = true;
+        return;
+      }
+      loadInFlight = true;
+      try {
+        do {
+          loadQueued = false;
+          const seq = ++loadSeq;
+          const tier = currentWorkload;
           // #region agent log
-          dbg('H2', 'index.html:load', 'stale response discarded', { seq, currentLoadSeq: loadSeq, tier });
+          dbg('H2', 'index.html:load', 'load start', { seq, tier, force });
           // #endregion
-          return;
-        }
-        // #region agent log
-        dbg('H4', 'index.html:load', 'load complete', {
-          seq,
-          tier,
-          tpuTok: tpuRes.replay?.output_tokens_per_second,
-          gpuTok: gpuRes.replay?.output_tokens_per_second,
-          tpuReq: tpuRes.replay?.successful_requests,
-          gpuReq: gpuRes.replay?.successful_requests,
-          tpuPath: tpuRes.replay_path,
-          gpuPath: gpuRes.replay_path,
-        });
-        // #endregion
-        updateWorkloadToggleActive();
-        window.__gcsError = statusRes.gcs_error || null;
-        panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
-        renderCompare(tpuRes, gpuRes);
-        renderHardwareSpecs(resolveAllHardware(gpuRes, tpuRes, hwRes, migRes));
-        const src = statusRes.data_source || statusRes.results_source || 'local';
-        const gcsErr = statusRes.gcs_error;
-        const bucket = statusRes.gcs_bucket ? `gs://${statusRes.gcs_bucket}/${statusRes.gcs_prefix || 'latest'}` : '';
-        const manifestAt = statusRes.manifest?.updated_at;
-        const availTpu = (tpuRes.available_tiers || []).join(', ') || 'none';
-        const availGpu = (gpuRes.available_tiers || []).join(', ') || 'none';
-        const tpuSrc = tpuRes.replay_source || statusRes.tier_sources?.tpu?.[tier] || '—';
-        const gpuSrc = gpuRes.replay_source || statusRes.tier_sources?.gpu?.[tier] || '—';
-        const tpuPath = tpuRes.replay_path || '';
-        const tpuTok = tpuRes.replay?.output_tokens_per_second;
-        const gpuTok = gpuRes.replay?.output_tokens_per_second;
-        document.getElementById('data-source').textContent =
-          (gcsErr ? `GCS ERROR: ${gcsErr} · ` : '')
-          + `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''}`
-          + ` · tier: ${tier}${tpuTok != null ? ' · tpu ' + fmt(tpuTok, 1) + ' out tok/s/chip' : ''}${gpuTok != null ? ' · gpu ' + fmt(gpuTok, 1) + ' out tok/s/chip' : ''}`
-          + ` · tpu: ${tpuSrc} (${availTpu}) · gpu: ${gpuSrc} (${availGpu})`
-          + `${tpuPath ? ' · ' + tpuPath.split('/').slice(-4).join('/') : ''}`;
-        updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
-        updatedEl.className = 'pill';
-      } catch (e) {
-        // #region agent log
-        dbg('H4', 'index.html:load', 'load error', { seq, tier, error: String(e) });
-        // #endregion
-        updatedEl.textContent = 'fetch error';
-        updatedEl.className = 'pill missing';
+          try {
+            const [tpuRes, gpuRes, migRes, hwRes] = await Promise.all([
+              fetch(resultsUrl('tpu', tier)).then(r => r.json()),
+              fetch(resultsUrl('gpu', tier)).then(r => r.json()),
+              fetch('/api/migration').then(r => r.json()),
+              fetch('/api/hardware').then(r => r.ok ? r.json() : null).catch(() => null),
+            ]);
+            const statusRes = lastStatusRes;
+            if (seq !== loadSeq) {
+              // #region agent log
+              dbg('H2', 'index.html:load', 'stale response discarded', { seq, currentLoadSeq: loadSeq, tier });
+              // #endregion
+              continue;
+            }
+            // #region agent log
+            dbg('H4', 'index.html:load', 'load complete', {
+              seq,
+              tier,
+              tpuTok: tpuRes.replay?.output_tokens_per_second,
+              gpuTok: gpuRes.replay?.output_tokens_per_second,
+              tpuReq: tpuRes.replay?.successful_requests,
+              gpuReq: gpuRes.replay?.successful_requests,
+              tpuPath: tpuRes.replay_path,
+              gpuPath: gpuRes.replay_path,
+            });
+            // #endregion
+            updateWorkloadToggleActive();
+            window.__gcsError = statusRes.gcs_error || null;
+            panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
+            renderCompare(tpuRes, gpuRes);
+            renderHardwareSpecs(resolveAllHardware(gpuRes, tpuRes, hwRes, migRes));
+            const src = statusRes.data_source || statusRes.results_source || 'local';
+            const gcsErr = statusRes.gcs_error;
+            const bucket = statusRes.gcs_bucket ? `gs://${statusRes.gcs_bucket}/${statusRes.gcs_prefix || 'latest'}` : '';
+            const manifestAt = statusRes.manifest?.updated_at;
+            const availTpu = (tpuRes.available_tiers || []).join(', ') || 'none';
+            const availGpu = (gpuRes.available_tiers || []).join(', ') || 'none';
+            const tpuSrc = tpuRes.replay_source || statusRes.tier_sources?.tpu?.[tier] || '—';
+            const gpuSrc = gpuRes.replay_source || statusRes.tier_sources?.gpu?.[tier] || '—';
+            const tpuPath = tpuRes.replay_path || '';
+            const tpuTok = tpuRes.replay?.output_tokens_per_second;
+            const gpuTok = gpuRes.replay?.output_tokens_per_second;
+            document.getElementById('data-source').textContent =
+              (gcsErr ? `GCS ERROR: ${gcsErr} · ` : '')
+              + `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''}`
+              + ` · tier: ${tier}${tpuTok != null ? ' · tpu ' + fmt(tpuTok, 1) + ' out tok/s/chip' : ''}${gpuTok != null ? ' · gpu ' + fmt(gpuTok, 1) + ' out tok/s/chip' : ''}`
+              + ` · tpu: ${tpuSrc} (${availTpu}) · gpu: ${gpuSrc} (${availGpu})`
+              + `${tpuPath ? ' · ' + tpuPath.split('/').slice(-4).join('/') : ''}`;
+            updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
+            updatedEl.className = 'pill';
+          } catch (e) {
+            // #region agent log
+            dbg('H4', 'index.html:load', 'load error', { seq, tier, error: String(e) });
+            // #endregion
+            updatedEl.textContent = 'fetch error';
+            updatedEl.className = 'pill missing';
+          }
+        } while (loadQueued);
+      } finally {
+        loadInFlight = false;
       }
     }
 
@@ -1228,7 +1253,13 @@
 
     function startAuto() {
       clearInterval(timer);
-      timer = setInterval(load, 3000);
+      timer = setInterval(() => load(), 10000);
+    }
+
+    let statusTimer = null;
+    function startStatusPoll() {
+      clearInterval(statusTimer);
+      statusTimer = setInterval(pollStatus, 30000);
     }
 
     const themeBtn = document.getElementById('theme');
@@ -1246,9 +1277,11 @@
 
     renderHardwareSpecs({ gpu: PLATFORM_DEFAULTS.gpu, tpu: PLATFORM_DEFAULTS.tpu });
 
-    initWorkloads().then(() => {
+    initWorkloads().then(async () => {
+      await pollStatus();
       load();
       startAuto();
+      startStatusPoll();
     });
   </script>
 </body>
