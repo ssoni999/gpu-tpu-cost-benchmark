@@ -955,8 +955,12 @@
       workloadToggleEl.addEventListener('click', (e) => {
         const btn = e.target.closest('.workload-btn');
         if (!btn || btn.dataset.tier === currentWorkload) return;
+        const prev = currentWorkload;
         currentWorkload = btn.dataset.tier;
         localStorage.setItem('bench-workload', currentWorkload);
+        // #region agent log
+        dbg('H1', 'index.html:toggle', 'tier click', { prev, next: currentWorkload });
+        // #endregion
         updateWorkloadToggleActive();
         load();
       });
@@ -988,6 +992,16 @@
     }
 
     let loadSeq = 0;
+
+    // #region agent log
+    function dbg(hypothesisId, location, message, data) {
+      fetch('/api/debug/log', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ hypothesisId, location, message, data: data || {}, sessionId: 'aebf56' }),
+      }).catch(() => {});
+    }
+    // #endregion
 
     function resultsUrl(platform, tier) {
       const w = tier || currentWorkload;
@@ -1143,6 +1157,9 @@
     async function load() {
       const seq = ++loadSeq;
       const tier = currentWorkload;
+      // #region agent log
+      dbg('H2', 'index.html:load', 'load start', { seq, tier });
+      // #endregion
       try {
         const [tpuRes, gpuRes, migRes, statusRes, hwRes] = await Promise.all([
           fetch(resultsUrl('tpu', tier)).then(r => r.json()),
@@ -1151,7 +1168,24 @@
           fetch('/api/status').then(r => r.json()),
           fetch('/api/hardware').then(r => r.ok ? r.json() : null).catch(() => null),
         ]);
-        if (seq !== loadSeq) return;
+        if (seq !== loadSeq) {
+          // #region agent log
+          dbg('H2', 'index.html:load', 'stale response discarded', { seq, currentLoadSeq: loadSeq, tier });
+          // #endregion
+          return;
+        }
+        // #region agent log
+        dbg('H4', 'index.html:load', 'load complete', {
+          seq,
+          tier,
+          tpuTok: tpuRes.replay?.output_tokens_per_second,
+          gpuTok: gpuRes.replay?.output_tokens_per_second,
+          tpuReq: tpuRes.replay?.successful_requests,
+          gpuReq: gpuRes.replay?.successful_requests,
+          tpuPath: tpuRes.replay_path,
+          gpuPath: gpuRes.replay_path,
+        });
+        // #endregion
         updateWorkloadToggleActive();
         window.__gcsError = statusRes.gcs_error || null;
         panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
@@ -1177,6 +1211,9 @@
         updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();
         updatedEl.className = 'pill';
       } catch (e) {
+        // #region agent log
+        dbg('H4', 'index.html:load', 'load error', { seq, tier, error: String(e) });
+        // #endregion
         updatedEl.textContent = 'fetch error';
         updatedEl.className = 'pill missing';
       }

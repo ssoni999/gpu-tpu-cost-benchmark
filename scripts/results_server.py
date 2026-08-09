@@ -6,10 +6,34 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 
 from aiohttp import web
+
+# #region agent log
+_DEBUG_LOG = Path(__file__).resolve().parents[1] / ".cursor" / "debug-aebf56.log"
+
+
+def _debug_log(hypothesis_id: str, location: str, message: str, data: dict[str, Any] | None = None) -> None:
+    try:
+        _DEBUG_LOG.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "sessionId": "aebf56",
+            "hypothesisId": hypothesis_id,
+            "location": location,
+            "message": message,
+            "data": data or {},
+            "timestamp": int(time.time() * 1000),
+        }
+        with _DEBUG_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+# #endregion
 
 from config import (
     default_workload,
@@ -500,6 +524,19 @@ def build_app(backend: ResultsBackend) -> web.Application:
             "tiers": workloads_catalog(cfg),
         })
 
+    async def handle_debug_log(request: web.Request) -> web.Response:
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"ok": False}, status=400)
+        _debug_log(
+            str(body.get("hypothesisId") or "?"),
+            str(body.get("location") or "frontend"),
+            str(body.get("message") or ""),
+            body.get("data") if isinstance(body.get("data"), dict) else {},
+        )
+        return web.json_response({"ok": True})
+
     async def handle_results(request: web.Request) -> web.Response:
         platform = request.match_info["platform"]
         if platform not in PLATFORMS:
@@ -520,6 +557,22 @@ def build_app(backend: ResultsBackend) -> web.Application:
             cost_metrics = replay.get("cost_metrics") or compute_replay_cost_metrics(replay, platform)
         is_running = bool(live and live.get("status") == "running")
         resolved = resolved_tier or tier or default_workload()
+        # #region agent log
+        _debug_log(
+            "H3",
+            "results_server.py:handle_results",
+            "results response",
+            {
+                "platform": platform,
+                "requested_tier": tier,
+                "resolved_tier": resolved,
+                "has_replay": replay is not None,
+                "replay_path": replay_path,
+                "output_tokens_per_second": (replay or {}).get("output_tokens_per_second"),
+                "successful_requests": (replay or {}).get("successful_requests"),
+            },
+        )
+        # #endregion
         payload = {
             "platform": platform,
             "requested_tier": tier or default_workload(),
@@ -585,6 +638,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
                 out["tiers"][platform][tier] = info
         return web.json_response(out)
 
+    app.router.add_post("/api/debug/log", handle_debug_log)
     app.router.add_get("/", handle_index)
     app.router.add_get("/advisor", handle_advisor_page)
     app.router.add_post("/api/advisor/analyze", handle_advisor_analyze)
