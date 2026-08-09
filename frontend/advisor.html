@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Workload Optimization Advisor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --card: #151b24;
+      --border: #2a3441;
+      --text: #e8edf4;
+      --muted: #7d8a9a;
+      --accent: #60a5fa;
+      --accent-dim: rgba(96, 165, 250, 0.12);
+      --gpu: #ff6b6b;
+      --tpu: #4ade80;
+      --warn: #fbbf24;
+      --crit: #ff8787;
+      --ok: #4ade80;
+      --radius: 12px;
+      --code-bg: #0d1118;
+    }
+    [data-theme="light"] {
+      --bg: #f0f2f5;
+      --card: #fff;
+      --border: #dfe3ea;
+      --text: #1a1d24;
+      --muted: #5c6578;
+      --accent: #174ea6;
+      --accent-dim: #e8f0fe;
+      --code-bg: #f4f5f7;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Inter", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.55;
+      min-height: 100vh;
+    }
+    header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(21, 27, 36, 0.9);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    [data-theme="light"] header { background: rgba(255,255,255,0.95); }
+    h1 { margin: 0; font-size: 1.15rem; }
+    .sub { color: var(--muted); font-size: 0.82rem; margin-top: 0.15rem; }
+    nav { display: flex; gap: 0.75rem; align-items: center; }
+    nav a {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.88rem;
+      font-weight: 500;
+    }
+    nav a:hover { text-decoration: underline; }
+    button, .btn {
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      padding: 0.45rem 0.85rem;
+      border-radius: 8px;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    main { max-width: 1100px; margin: 0 auto; padding: 1.5rem; }
+    .grid { display: grid; gap: 1.25rem; }
+    @media (min-width: 900px) {
+      .grid-2 { grid-template-columns: 1fr 1fr; }
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+    }
+    .card h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+    .dropzone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 2rem 1rem;
+      text-align: center;
+      transition: border-color 0.15s, background 0.15s;
+      cursor: pointer;
+    }
+    .dropzone.dragover {
+      border-color: var(--accent);
+      background: var(--accent-dim);
+    }
+    .dropzone p { margin: 0.35rem 0; color: var(--muted); font-size: 0.9rem; }
+    .dropzone .filename { color: var(--text); font-weight: 600; margin-top: 0.5rem; }
+    input[type="file"] { display: none; }
+    .form-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.82rem;
+      color: var(--muted);
+      flex: 1;
+      min-width: 140px;
+    }
+    select, input[type="text"] {
+      font: inherit;
+      padding: 0.45rem 0.6rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--code-bg);
+      color: var(--text);
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+      gap: 0.75rem;
+    }
+    .stat {
+      background: var(--code-bg);
+      border-radius: 8px;
+      padding: 0.65rem 0.75rem;
+      border: 1px solid var(--border);
+    }
+    .stat .val { font-size: 1.15rem; font-weight: 700; }
+    .stat .lbl { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .pill {
+      display: inline-block;
+      padding: 0.15rem 0.55rem;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: var(--accent-dim);
+      color: var(--accent);
+    }
+    .pill.gpu { background: rgba(255,107,107,0.15); color: var(--gpu); }
+    .pill.tpu { background: rgba(74,222,128,0.15); color: var(--tpu); }
+    .rec {
+      border-left: 3px solid var(--accent);
+      padding: 0.75rem 0 0.75rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .rec.critical { border-color: var(--crit); }
+    .rec.high { border-color: var(--accent); }
+    .rec.medium { border-color: var(--warn); }
+    .rec h3 { margin: 0 0 0.35rem; font-size: 0.95rem; }
+    .rec p { margin: 0 0 0.5rem; color: var(--muted); font-size: 0.88rem; }
+    .rec ul { margin: 0; padding-left: 1.2rem; font-size: 0.86rem; }
+    .rec li { margin-bottom: 0.25rem; }
+    .phase {
+      margin-bottom: 1rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .phase:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+    .phase h3 { margin: 0 0 0.35rem; font-size: 0.92rem; }
+    .phase .phase-label {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      font-weight: 600;
+    }
+    .phase ul { margin: 0.35rem 0 0; padding-left: 1.2rem; font-size: 0.86rem; color: var(--muted); }
+    .errors {
+      background: rgba(255,107,107,0.1);
+      border: 1px solid rgba(255,107,107,0.3);
+      color: var(--crit);
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-top: 1rem;
+      font-size: 0.88rem;
+    }
+    .warnings {
+      background: rgba(251,191,36,0.1);
+      border: 1px solid rgba(251,191,36,0.3);
+      color: var(--warn);
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-top: 0.75rem;
+      font-size: 0.88rem;
+    }
+    #results { display: none; }
+    #results.visible { display: block; }
+    .loading { color: var(--muted); font-size: 0.9rem; }
+    code {
+      font-family: ui-monospace, monospace;
+      font-size: 0.82em;
+      background: var(--code-bg);
+      padding: 0.1em 0.35em;
+      border-radius: 4px;
+    }
+    footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 0.8rem;
+      padding: 2rem 1rem;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Workload Optimization Advisor</h1>
+      <div class="sub">Upload your inference trace — get platform, caching, and migration guidance</div>
+    </div>
+    <nav>
+      <a href="/">← Benchmark Results</a>
+      <button type="button" id="theme" title="Toggle theme">☀</button>
+    </nav>
+  </header>
+
+  <main>
+    <div class="card">
+      <h2>Upload workload</h2>
+      <div class="dropzone" id="dropzone">
+        <p><strong>Drop a JSONL file</strong> or click to browse</p>
+        <p>Each line: <code>{"prompt": "…", "max_tokens": 128, "offset": 0.0}</code></p>
+        <p>Also accepts JSON arrays or chat-style <code>messages</code> fields</p>
+        <div class="filename" id="filename"></div>
+      </div>
+      <input type="file" id="file" accept=".jsonl,.json,.txt" />
+
+      <div class="form-row">
+        <label>
+          Current platform
+          <select id="current-platform">
+            <option value="">— not specified —</option>
+            <option value="gpu">GPU</option>
+            <option value="tpu">TPU</option>
+          </select>
+        </label>
+        <label>
+          Target platform
+          <select id="target-platform">
+            <option value="">Auto-recommend</option>
+            <option value="gpu">GPU</option>
+            <option value="tpu">TPU</option>
+          </select>
+        </label>
+        <label>
+          Model (optional)
+          <input type="text" id="model" placeholder="Qwen/Qwen2.5-0.5B-Instruct" />
+        </label>
+      </div>
+
+      <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+        <button type="button" class="primary" id="analyze" disabled>Analyze workload</button>
+        <span class="loading" id="status"></span>
+      </div>
+      <div id="form-errors"></div>
+    </div>
+
+    <div id="results">
+      <div class="grid grid-2" style="margin-top: 1.25rem;">
+        <div class="card">
+          <h2>Workload profile</h2>
+          <div class="stats" id="stats"></div>
+        </div>
+        <div class="card">
+          <h2>Classification</h2>
+          <div id="classification"></div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top: 1.25rem;">
+        <h2>Optimization recommendations</h2>
+        <div id="recommendations"></div>
+      </div>
+
+      <div class="card" style="margin-top: 1.25rem;">
+        <h2>Migration playbook</h2>
+        <div id="migration"></div>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    Rules-based advisor using benchmark_config.yaml · Run <code>make replay</code> to validate on live vLLM
+  </footer>
+
+  <script>
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file');
+    const filenameEl = document.getElementById('filename');
+    const analyzeBtn = document.getElementById('analyze');
+    const statusEl = document.getElementById('status');
+    const formErrors = document.getElementById('form-errors');
+    const resultsEl = document.getElementById('results');
+    let selectedFile = null;
+
+    function fmt(n, d = 1) {
+      if (n == null || Number.isNaN(Number(n))) return '—';
+      return Number(n).toLocaleString(undefined, { maximumFractionDigits: d });
+    }
+
+    dropzone.onclick = () => fileInput.click();
+    dropzone.ondragover = (e) => { e.preventDefault(); dropzone.classList.add('dragover'); };
+    dropzone.ondragleave = () => dropzone.classList.remove('dragover');
+    dropzone.ondrop = (e) => {
+      e.preventDefault();
+      dropzone.classList.remove('dragover');
+      if (e.dataTransfer.files.length) setFile(e.dataTransfer.files[0]);
+    };
+    fileInput.onchange = () => { if (fileInput.files[0]) setFile(fileInput.files[0]); };
+
+    function setFile(file) {
+      selectedFile = file;
+      filenameEl.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
+      analyzeBtn.disabled = false;
+      formErrors.innerHTML = '';
+    }
+
+    function stat(label, value) {
+      return '<div class="stat"><div class="val">' + value + '</div><div class="lbl">' + label + '</div></div>';
+    }
+
+    function renderResults(data) {
+      const s = data.stats;
+      document.getElementById('stats').innerHTML = [
+        stat('Requests', fmt(s.num_requests, 0)),
+        stat('Avg input tok', fmt(s.avg_input_tokens)),
+        stat('p95 input tok', fmt(s.p95_input_tokens)),
+        stat('Avg output tok', fmt(s.avg_output_tokens)),
+        stat('Req / sec', fmt(s.requests_per_second, 2)),
+        stat('Span (s)', fmt(s.span_seconds)),
+      ].join('');
+
+      const plat = data.platform.recommended_platform;
+      const tier = data.tier;
+      document.getElementById('classification').innerHTML =
+        '<p><span class="pill">' + tier.label + '</span> closest tier (<code>' + tier.closest_tier + '</code>)</p>' +
+        '<p style="color:var(--muted);font-size:0.88rem;margin:0.75rem 0">' + (tier.description || '') + '</p>' +
+        '<p>Recommended platform: <span class="pill ' + plat + '">' + plat.toUpperCase() + '</span></p>' +
+        '<p style="font-size:0.85rem;color:var(--muted)">GPU fit ' + fmt(data.platform.gpu_fit_score, 2) +
+        ' · TPU fit ' + fmt(data.platform.tpu_fit_score, 2) + '</p>';
+
+      document.getElementById('recommendations').innerHTML = data.recommendations.map((r) =>
+        '<div class="rec ' + r.priority + '">' +
+        '<h3>' + r.title + ' <span class="pill">' + r.category + '</span></h3>' +
+        '<p>' + r.rationale + '</p>' +
+        '<ul>' + r.actions.map((a) => '<li>' + a.replace(/`([^`]+)`/g, '<code>$1</code>') + '</li>').join('') + '</ul>' +
+        '</div>'
+      ).join('');
+
+      document.getElementById('migration').innerHTML = data.migration_steps.map((step) =>
+        '<div class="phase">' +
+        '<div class="phase-label">' + step.phase + '</div>' +
+        '<h3>' + step.title + '</h3>' +
+        '<ul>' + step.details.map((d) => '<li>' + d.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/`([^`]+)`/g, '<code>$1</code>') + '</li>').join('') + '</ul>' +
+        '</div>'
+      ).join('');
+
+      resultsEl.classList.add('visible');
+    }
+
+    analyzeBtn.onclick = async () => {
+      if (!selectedFile) return;
+      analyzeBtn.disabled = true;
+      statusEl.textContent = 'Analyzing…';
+      formErrors.innerHTML = '';
+      resultsEl.classList.remove('visible');
+
+      const form = new FormData();
+      form.append('file', selectedFile);
+      const cur = document.getElementById('current-platform').value;
+      const tgt = document.getElementById('target-platform').value;
+      const model = document.getElementById('model').value.trim();
+      if (cur) form.append('current_platform', cur);
+      if (tgt) form.append('target_platform', tgt);
+      if (model) form.append('model', model);
+
+      try {
+        const res = await fetch('/api/advisor/analyze', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!data.ok) {
+          formErrors.innerHTML = '<div class="errors"><strong>Could not analyze:</strong><ul>' +
+            data.errors.map((e) => '<li>' + e + '</li>').join('') + '</ul></div>';
+          if (data.warnings && data.warnings.length) {
+            formErrors.innerHTML += '<div class="warnings">' + data.warnings.join('<br>') + '</div>';
+          }
+        } else {
+          if (data.warnings && data.warnings.length) {
+            formErrors.innerHTML = '<div class="warnings">' + data.warnings.slice(0, 5).join('<br>') +
+              (data.warnings.length > 5 ? '<br>…and ' + (data.warnings.length - 5) + ' more' : '') + '</div>';
+          }
+          renderResults(data);
+        }
+      } catch (err) {
+        formErrors.innerHTML = '<div class="errors">Request failed: ' + err.message + '</div>';
+      } finally {
+        analyzeBtn.disabled = false;
+        statusEl.textContent = '';
+      }
+    };
+
+    const themeBtn = document.getElementById('theme');
+    function applyTheme(t) {
+      document.documentElement.setAttribute('data-theme', t);
+      localStorage.setItem('bench-ui-theme', t);
+      themeBtn.textContent = t === 'dark' ? '☀' : '☾';
+    }
+    applyTheme(localStorage.getItem('bench-ui-theme') || 'dark');
+    themeBtn.onclick = () => applyTheme(document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+  </script>
+</body>
+</html>

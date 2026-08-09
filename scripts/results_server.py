@@ -35,6 +35,7 @@ from gcs_results import (
     object_implies_tier,
 )
 from workload_projection import resolve_tier_replay
+from workload_advisor import MAX_BYTES, analyze_workload
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -374,6 +375,88 @@ def build_app(backend: ResultsBackend) -> web.Application:
             raise web.HTTPNotFound(text="frontend/index.html missing")
         return web.Response(text=_render_index(), content_type="text/html")
 
+    async def handle_advisor_page(_request: web.Request) -> web.Response:
+        path = FRONTEND / "advisor.html"
+        if not path.exists():
+            raise web.HTTPNotFound(text="frontend/advisor.html missing")
+        return web.Response(text=path.read_text(encoding="utf-8"), content_type="text/html")
+
+    async def handle_advisor_analyze(request: web.Request) -> web.Response:
+        current_platform: str | None = None
+        target_platform: str | None = None
+        model: str | None = None
+        content: str | None = None
+        filename = "upload.jsonl"
+
+        if request.content_type and "multipart/form-data" in request.content_type:
+            reader = await request.multipart()
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                name = part.name or ""
+                if name == "file":
+                    filename = part.filename or filename
+                    raw = await part.read()
+                    if len(raw) > MAX_BYTES:
+                        return web.json_response(
+                            {"ok": False, "errors": [f"File too large (max {MAX_BYTES // (1024*1024)} MB)."]},
+                            status=413,
+                        )
+                    content = raw.decode("utf-8", errors="replace")
+                elif name == "current_platform":
+                    current_platform = (await part.read()).decode("utf-8", errors="replace").strip() or None
+                elif name == "target_platform":
+                    target_platform = (await part.read()).decode("utf-8", errors="replace").strip() or None
+                elif name == "model":
+                    model = (await part.read()).decode("utf-8", errors="replace").strip() or None
+        else:
+            try:
+                body = await request.json()
+            except json.JSONDecodeError:
+                return web.json_response({"ok": False, "errors": ["Expected multipart file or JSON body."]}, status=400)
+            content = body.get("content")
+            filename = body.get("filename") or filename
+            current_platform = body.get("current_platform")
+            target_platform = body.get("target_platform")
+            model = body.get("model")
+            if content and len(content.encode("utf-8")) > MAX_BYTES:
+                return web.json_response(
+                    {"ok": False, "errors": [f"Payload too large (max {MAX_BYTES // (1024*1024)} MB)."]},
+                    status=413,
+                )
+
+        if not content:
+            return web.json_response({"ok": False, "errors": ["No workload file provided."]}, status=400)
+
+        result = analyze_workload(
+            content,
+            filename=filename,
+            current_platform=current_platform,
+            target_platform=target_platform,
+            model=model,
+        )
+        status = 200 if result.get("ok") else 422
+        return web.json_response(result, status=status)
+
+    async def handle_advisor_schema(_request: web.Request) -> web.Response:
+        return web.json_response({
+            "format": "jsonl",
+            "required_fields": ["prompt", "max_tokens"],
+            "optional_fields": ["offset", "category", "id"],
+            "aliases": {
+                "prompt": ["input", "text", "content", "query", "messages"],
+                "max_tokens": ["max_output_tokens", "completion_tokens"],
+                "offset": ["timestamp", "arrival_time"],
+            },
+            "example_line": {
+                "prompt": "System context…\\n\\n---\\n\\nUser question…",
+                "max_tokens": 128,
+                "offset": 0.0,
+                "category": "qa",
+            },
+        })
+
     async def handle_status(_request: web.Request) -> web.Response:
         backend: ResultsBackend = _request.app["backend"]
         manifest = await backend.get_manifest()
@@ -503,6 +586,9 @@ def build_app(backend: ResultsBackend) -> web.Application:
         return web.json_response(out)
 
     app.router.add_get("/", handle_index)
+    app.router.add_get("/advisor", handle_advisor_page)
+    app.router.add_post("/api/advisor/analyze", handle_advisor_analyze)
+    app.router.add_get("/api/advisor/schema", handle_advisor_schema)
     app.router.add_get("/api/status", handle_status)
     app.router.add_get("/api/gcs/inspect", handle_gcs_inspect)
     app.router.add_get("/api/workloads", handle_workloads)
@@ -548,6 +634,7 @@ def main() -> None:
     backend = ResultsBackend(source=args.source, gcs=gcs_store, gcs_access=gcs_access)
 
     print(f"Results UI: http://127.0.0.1:{args.port}/")
+    print(f"  Advisor:  http://127.0.0.1:{args.port}/advisor")
     print(f"  Results source: {args.source}")
     if backend.gcs and backend.gcs.enabled:
         print(f"  GCS: gs://{settings.bucket}/{settings.prefix}/")
