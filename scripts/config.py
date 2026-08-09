@@ -165,6 +165,7 @@ def workloads_catalog(cfg: dict[str, Any] | None = None) -> list[dict[str, Any]]
             "input_tokens": profile.get("input_tokens"),
             "output_tokens": profile.get("output_tokens"),
             "trace_file": profile.get("trace_file"),
+            "max_input_tokens": profile.get("max_input_tokens"),
             "total_tokens_per_run": (
                 int(profile.get("num_prompts", 0))
                 * (int(profile.get("input_tokens", 0)) + int(profile.get("output_tokens", 0)))

@@ -219,18 +219,25 @@
     }
 
     .layout {
-      display: grid;
-      grid-template-columns: 260px 1fr;
+      display: flex;
+      flex-direction: column;
       gap: 1.25rem;
+    }
+
+    main { max-width: 1400px; margin: 0 auto; padding: 1.5rem 1.5rem 2.5rem; }
+
+    .spec-compare {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
       align-items: start;
     }
 
     @media (max-width: 960px) {
-      .layout { grid-template-columns: 1fr; }
+      .spec-compare { grid-template-columns: 1fr; }
     }
 
-    main { max-width: 1400px; margin: 0 auto; padding: 1.5rem 1.5rem 2.5rem; }
-    .sidebar { display: flex; flex-direction: column; gap: 0.75rem; }
+    .sidebar { display: contents; }
 
     .spec-card {
       background: var(--card);
@@ -613,22 +620,24 @@
 
   <main>
     <div class="layout">
-      <aside class="sidebar" id="sidebar">
-        <details class="spec-card gpu">
-          <summary class="spec-head gpu">
-            <span>GPU node pool</span>
-            <span class="spec-chevron" aria-hidden="true">▸</span>
-          </summary>
-          <div id="gpu-specs" class="spec-body">Loading…</div>
-        </details>
-        <details class="spec-card tpu">
-          <summary class="spec-head tpu">
-            <span>TPU node pool</span>
-            <span class="spec-chevron" aria-hidden="true">▸</span>
-          </summary>
-          <div id="tpu-specs" class="spec-body">Loading…</div>
-        </details>
-      </aside>
+      <div class="spec-compare" id="spec-compare">
+        <aside class="sidebar" id="sidebar">
+          <details class="spec-card gpu" open>
+            <summary class="spec-head gpu">
+              <span>GPU node pool</span>
+              <span class="spec-chevron" aria-hidden="true">▸</span>
+            </summary>
+            <div id="gpu-specs" class="spec-body">Loading…</div>
+          </details>
+          <details class="spec-card tpu" open>
+            <summary class="spec-head tpu">
+              <span>TPU node pool</span>
+              <span class="spec-chevron" aria-hidden="true">▸</span>
+            </summary>
+            <div id="tpu-specs" class="spec-body">Loading…</div>
+          </details>
+        </aside>
+      </div>
       <div class="content">
         <div class="workload-bar">
           <h3>Workload complexity</h3>
@@ -1054,7 +1063,7 @@
           ${errBlock}
           <div class="hero ${headClass}${cmpHighlight(platform, 'output_tokens_per_second', r.output_tokens_per_second, other?.output_tokens_per_second) === 'tpu-win' ? ' tpu-win' : ''}">
             <div class="big">${fmt(r.output_tokens_per_second, 1)}${heroIndicator(platform, 'output_tokens_per_second', r.output_tokens_per_second, other?.output_tokens_per_second)}</div>
-            <div class="label">output tokens / sec</div>
+            <div class="label">output tokens / sec / chip</div>
           </div>
           <div class="grid">
             ${metricSection('Performance')}
@@ -1106,7 +1115,7 @@
       const ca = gpu.cost_metrics || a?.cost_metrics || {};
       const cb = tpu.cost_metrics || b?.cost_metrics || {};
       const rows = [
-        ['Output tok/s', a.output_tokens_per_second, b.output_tokens_per_second, true],
+        ['Output tok/s/chip', a.output_tokens_per_second, b.output_tokens_per_second, true],
         ['TTFT p95 (ms)', a.ttft_ms?.p95, b.ttft_ms?.p95, false],
         ['Latency p95 (ms)', a.latency_ms?.p95, b.latency_ms?.p95, false],
         ['MFU %', a.hardware_utilization?.mfu_percent, b.hardware_utilization?.mfu_percent, true],
@@ -1162,7 +1171,7 @@
         document.getElementById('data-source').textContent =
           (gcsErr ? `GCS ERROR: ${gcsErr} · ` : '')
           + `Source: ${src}${bucket ? ' · ' + bucket : ''}${manifestAt ? ' · updated ' + manifestAt : ''}`
-          + ` · tier: ${tier}${tpuTok != null ? ' · tpu ' + fmt(tpuTok, 1) + ' tok/s' : ''}${gpuTok != null ? ' · gpu ' + fmt(gpuTok, 1) + ' tok/s' : ''}`
+          + ` · tier: ${tier}${tpuTok != null ? ' · tpu ' + fmt(tpuTok, 1) + ' out tok/s/chip' : ''}${gpuTok != null ? ' · gpu ' + fmt(gpuTok, 1) + ' out tok/s/chip' : ''}`
           + ` · tpu: ${tpuSrc} (${availTpu}) · gpu: ${gpuSrc} (${availGpu})`
           + `${tpuPath ? ' · ' + tpuPath.split('/').slice(-4).join('/') : ''}`;
         updatedEl.textContent = 'updated ' + new Date().toLocaleTimeString();

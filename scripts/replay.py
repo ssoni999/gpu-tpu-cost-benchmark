@@ -196,7 +196,16 @@ class RequestResult:
     error: Optional[str] = None
 
 
-def load_trace(path: Path) -> list[TraceRecord]:
+def load_trace(path: Path, tier: str | None = None, cfg: dict | None = None) -> list[TraceRecord]:
+    from generate_trace import _enforce_max_prompt_tokens
+
+    max_input: int | None = None
+    if tier:
+        profile = workload_profile(cfg or load_config(), tier)
+        raw = profile.get("max_input_tokens")
+        if raw is not None:
+            max_input = int(raw)
+
     records = []
     with path.open(encoding="utf-8") as f:
         for line in f:
@@ -204,9 +213,12 @@ def load_trace(path: Path) -> list[TraceRecord]:
             if not line:
                 continue
             data = json.loads(line)
+            prompt = data["prompt"]
+            if max_input is not None:
+                prompt = _enforce_max_prompt_tokens(prompt, max_input)
             records.append(
                 TraceRecord(
-                    prompt=data["prompt"],
+                    prompt=prompt,
                     max_tokens=int(data["max_tokens"]),
                     offset=float(data.get("offset", 0.0)),
                 )
@@ -819,7 +831,7 @@ def main() -> int:
         print(f"Trace not found: {trace_path}. Run: make trace TIER={tier}", file=sys.stderr)
         return 1
 
-    trace = load_trace(trace_path)
+    trace = load_trace(trace_path, tier=tier, cfg=cfg)
     if not trace:
         print(f"No records in {trace_path}", file=sys.stderr)
         return 1

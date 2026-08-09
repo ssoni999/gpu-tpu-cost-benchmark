@@ -29,6 +29,7 @@ workloads:
     trace_file: workload/prompts.jsonl
     num_prompts: 100
     input_tokens: 1024
+    max_input_tokens: 30000
     output_tokens: 128
     trace_span_seconds: 120
     gpu_throughput_factor: 0.92

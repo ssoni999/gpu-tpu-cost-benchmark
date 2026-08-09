@@ -119,10 +119,13 @@ def generate_trace(
     seed: int,
     shared_prefix_tokens: int,
     max_model_len: int = 4096,
+    max_input_tokens: int | None = None,
 ) -> list[dict]:
     rng = random.Random(seed)
     system_prompt = _shared_prefix(shared_prefix_tokens)
     max_prompt_tokens = max_model_len - output_tokens - CHAT_TEMPLATE_BUFFER - TOKEN_BUDGET_SAFETY
+    if max_input_tokens is not None:
+        max_prompt_tokens = min(max_prompt_tokens, int(max_input_tokens))
     system_tok = _approx_tokens(system_prompt)
     user_token_cap = max(64, max_prompt_tokens - system_tok - 8)
     user_token_target = min(input_tokens, user_token_cap)
@@ -206,6 +209,9 @@ def main() -> None:
     num_requests = int(bench["num_prompts"])
     input_tokens = int(bench["input_tokens"])
     output_tokens = int(bench["output_tokens"])
+    max_input_tokens = bench.get("max_input_tokens")
+    if max_input_tokens is not None:
+        input_tokens = min(input_tokens, int(max_input_tokens))
     span_seconds = float(bench.get("trace_span_seconds", max(120.0, num_requests * 2.0)))
     shared_prefix_tokens = int(bench.get("shared_prefix_tokens", min(256, input_tokens // 4)))
     max_model_len = int(
@@ -227,6 +233,7 @@ def main() -> None:
         seed=seed,
         shared_prefix_tokens=shared_prefix_tokens,
         max_model_len=max_model_len,
+        max_input_tokens=int(max_input_tokens) if max_input_tokens is not None else None,
     )
 
     output = resolve_workload_trace_path(tier, args.output)
