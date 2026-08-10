@@ -47,7 +47,7 @@ PEAK_TFLOPS_DEFAULTS: dict[str, float] = {
 
 PLATFORM_INFRA: dict[str, tuple[str, float]] = {
     "tpu": ("TPU v5e", PEAK_TFLOPS_DEFAULTS["TPU v5e"]),
-    "gpu": ("GPU (L4)", PEAK_TFLOPS_DEFAULTS["GPU (L4)"]),
+    "gpu": ("GPU (T4)", PEAK_TFLOPS_DEFAULTS["GPU (T4)"]),
 }
 
 
