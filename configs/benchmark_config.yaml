@@ -40,6 +40,7 @@ workloads:
     analogy: "Multi-GPU DDP sequence classification benchmark"
     num_prompts: 100
     input_tokens: 1024
+    max_input_tokens: 120000
     output_tokens: 128
     gpu_throughput_factor: 1.0
     tpu_throughput_factor: 1.0
@@ -49,6 +50,7 @@ workloads:
     analogy: "JAX multi-GPU SPMD tensor-parallel benchmark"
     num_prompts: 200
     input_tokens: 2048
+    max_input_tokens: 400000
     output_tokens: 256
     trace_span_seconds: 600
     shared_prefix_tokens: 128
