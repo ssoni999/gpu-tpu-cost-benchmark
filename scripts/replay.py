@@ -47,7 +47,7 @@ PEAK_TFLOPS_DEFAULTS: dict[str, float] = {
 
 PLATFORM_INFRA: dict[str, tuple[str, float]] = {
     "tpu": ("TPU v5e", PEAK_TFLOPS_DEFAULTS["TPU v5e"]),
-    "gpu": ("GPU (T4)", PEAK_TFLOPS_DEFAULTS["GPU (T4)"]),
+    "gpu": ("GPU (L4)", PEAK_TFLOPS_DEFAULTS["GPU (L4)"]),
 }
 
 
@@ -56,7 +56,7 @@ def detect_infrastructure() -> tuple[str, float]:
     if os.path.exists("/dev/accel0") or "TPU_NAME" in os.environ:
         return "TPU v5e", PEAK_TFLOPS_DEFAULTS["TPU v5e"]
     if os.path.exists("/dev/nvidia0") or "CUDA_VISIBLE_DEVICES" in os.environ:
-        return "GPU (T4)", PEAK_TFLOPS_DEFAULTS["GPU (T4)"]
+        return "GPU (L4)", PEAK_TFLOPS_DEFAULTS["GPU (L4)"]
     return "Generic", PEAK_TFLOPS_DEFAULTS["Generic"]
 
 
