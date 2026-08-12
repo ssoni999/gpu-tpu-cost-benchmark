@@ -583,6 +583,17 @@
       line-height: 1.45;
     }
 
+    .workload-summary {
+      margin-top: 0.75rem;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border);
+      font-size: 0.88rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+
+    .workload-summary strong { color: var(--text); }
+
     .workload-desc em {
       color: var(--text-secondary);
       font-style: normal;
@@ -643,6 +654,7 @@
           <h3>Workload complexity</h3>
           <div class="workload-toggle" id="workload-toggle"></div>
           <div class="workload-desc" id="workload-desc"></div>
+          <div class="workload-summary" id="workload-summary"></div>
         </div>
         <div id="compare-bar" class="compare-bar">
           <h3>Head-to-head (same trace)</h3>
@@ -664,6 +676,7 @@
     const compareRows = document.getElementById('compare-rows');
     const workloadToggleEl = document.getElementById('workload-toggle');
     const workloadDescEl = document.getElementById('workload-desc');
+    const workloadSummaryEl = document.getElementById('workload-summary');
     let autoOn = true;
     let timer = null;
     let currentWorkload = localStorage.getItem('bench-workload') || 'medium';
@@ -1157,6 +1170,37 @@
       compareBar.classList.add('visible');
     }
 
+    function renderComplexitySummary(tpu, gpu, tier) {
+      const meta = workloadMeta(tier);
+      if (!tpu?.has_replay || !gpu?.has_replay) {
+        workloadSummaryEl.textContent = `${meta.label} workload — run both platforms to see a head-to-head summary.`;
+        return;
+      }
+
+      const a = gpu.replay, b = tpu.replay;
+      const ca = gpu.cost_metrics || a?.cost_metrics || {};
+      const cb = tpu.cost_metrics || b?.cost_metrics || {};
+      const aTok = Number(a.output_tokens_per_second), bTok = Number(b.output_tokens_per_second);
+      const aCost = Number(ca.cost_per_output_token_usd), bCost = Number(cb.cost_per_output_token_usd);
+
+      if (!aTok || !bTok || !aCost || !bCost) {
+        workloadSummaryEl.textContent = `${meta.label} workload — incomplete metrics for a summary.`;
+        return;
+      }
+
+      const throughputWinner = aTok > bTok ? 'GPU' : 'TPU';
+      const throughputGap = Math.abs(aTok - bTok) / Math.min(aTok, bTok) * 100;
+      const costWinner = aCost < bCost ? 'GPU' : 'TPU';
+      const costGap = Math.abs(aCost - bCost) / Math.max(aCost, bCost) * 100;
+
+      workloadSummaryEl.innerHTML = `For a <strong>${meta.label}</strong> workload, ` +
+        `<strong>${throughputWinner}</strong> is ${fmt(throughputGap, 0)}% faster (tok/s), ` +
+        `and <strong>${costWinner}</strong> is ${fmt(costGap, 0)}% cheaper per output token. ` +
+        (throughputWinner === costWinner
+          ? `<strong>${throughputWinner}</strong> wins on both.`
+          : `Trade-off: pick <strong>${throughputWinner}</strong> for speed, <strong>${costWinner}</strong> for cost.`);
+    }
+
     async function pollStatus() {
       try {
         lastStatusRes = await fetch('/api/status').then(r => r.json());
@@ -1211,6 +1255,7 @@
             window.__gcsError = statusRes.gcs_error || null;
             panelsEl.innerHTML = renderPanel('gpu', gpuRes, tpuRes) + renderPanel('tpu', tpuRes, gpuRes);
             renderCompare(tpuRes, gpuRes);
+            renderComplexitySummary(tpuRes, gpuRes, tier);
             renderHardwareSpecs(resolveAllHardware(gpuRes, tpuRes, hwRes, migRes));
             const src = statusRes.data_source || statusRes.results_source || 'local';
             const gcsErr = statusRes.gcs_error;
