@@ -394,7 +394,21 @@ def build_app(backend: ResultsBackend) -> web.Application:
             response.headers["Pragma"] = "no-cache"
         return response
 
+    @web.middleware
+    async def json_errors(request: web.Request, handler):
+        if not request.path.startswith("/api/"):
+            return await handler(request)
+        try:
+            return await handler(request)
+        except web.HTTPException:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            return web.json_response(
+                {"ok": False, "errors": [f"{type(exc).__name__}: {exc}"]}, status=500,
+            )
+
     app.middlewares.append(no_cache_api)
+    app.middlewares.append(json_errors)
 
     async def handle_index(_request: web.Request) -> web.Response:
         if not (FRONTEND / "index.html").exists():
