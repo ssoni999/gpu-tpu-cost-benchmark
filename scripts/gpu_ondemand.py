@@ -32,7 +32,7 @@ from render_manifest import render_platform
 from replay import TraceRecord, guess_params_b, replay_trace, resolve_api_mode, summarize
 from workload_advisor import parse_workload_text
 
-PROVISION_TIMEOUT_S = 600  # 10 minutes, per the cold-start budget for a 0->1 GPU node.
+PROVISION_TIMEOUT_S = 1200  # 20 minutes, per the cold-start budget for a 0->1 GPU node.
 POD_POLL_INTERVAL_S = 10
 SERVER_POLL_INTERVAL_S = 3
 FAILURE_WAIT_REASONS = {"ImagePullBackOff", "ErrImagePull", "CrashLoopBackOff", "InvalidImageName"}

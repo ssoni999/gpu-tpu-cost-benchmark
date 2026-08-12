@@ -86,6 +86,10 @@ Recommend whether to serve the workload described below on GPU or TPU, and produ
 - Produce 3-6 recommendations covering platform choice, context-length risk, prefix/KV-cache opportunities, batching/throughput tuning, and cost, ordered most important first.
 - Produce a 5-phase migration playbook: Assess, Prepare, Deploy, Validate, Cutover — concrete and specific to this project's tooling (make manifests, make replay, kubectl, results UI).
 - Keep rationale and details grounded in the numbers given; do not invent benchmark results that were not provided.
+- If "current_platform" is set in the user-provided context, the workload is already running there today — frame the migration playbook as a migration FROM current_platform, not a fresh deployment.
+- If "target_platform" is set in the user-provided context, the migration playbook's destination MUST be target_platform, even if it differs from recommended_platform — the user has already decided where they're headed; your job is the safe path there. If target_platform conflicts with what the data actually supports, say so explicitly in one of the recommendations (e.g. "you're targeting TPU but this workload's numbers favor GPU — proceed only if X") rather than silently overriding either value.
+- If "target_platform" is not set, use recommended_platform as the migration playbook's destination.
+- Never let current_platform/target_platform bias recommended_platform, gpu_fit_score, tpu_fit_score, or confidence — those must always reflect genuine analysis of the workload and platform data, independent of what the user says they're targeting.
 """
 
 
