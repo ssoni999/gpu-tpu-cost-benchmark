@@ -383,7 +383,10 @@ def _render_index() -> str:
 
 
 def build_app(backend: ResultsBackend) -> web.Application:
-    app = web.Application()
+    # aiohttp defaults client_max_size to 1 MiB, well under our own MAX_BYTES upload
+    # limit — without raising it, larger workload uploads get their connection aborted
+    # mid-stream instead of hitting our clean 413 JSON response.
+    app = web.Application(client_max_size=MAX_BYTES + 1_048_576)
     app["backend"] = backend
 
     @web.middleware
