@@ -204,7 +204,29 @@
     }
     #results { display: none; }
     #results.visible { display: block; }
+    #gpu-panel { display: none; }
+    #gpu-panel.visible { display: block; }
     .loading { color: var(--muted); font-size: 0.9rem; }
+    .gpu-status-row { display: flex; align-items: center; gap: 0.6rem; }
+    .spinner {
+      width: 14px; height: 14px; border-radius: 50%;
+      border: 2px solid var(--border); border-top-color: var(--accent);
+      animation: spin 0.8s linear infinite; flex: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .gpu-log {
+      margin-top: 0.75rem;
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.6rem 0.75rem;
+      font-family: ui-monospace, monospace;
+      font-size: 0.78rem;
+      color: var(--muted);
+      max-height: 160px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
     code {
       font-family: ui-monospace, monospace;
       font-size: 0.82em;
@@ -266,11 +288,26 @@
         </label>
       </div>
 
-      <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center;">
+      <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
         <button type="button" class="primary" id="analyze" disabled>Analyze workload</button>
+        <button type="button" id="run-gpu" disabled title="Analyze first">Run on real GPU</button>
         <span class="loading" id="status"></span>
       </div>
       <div id="form-errors"></div>
+    </div>
+
+    <div class="card" id="gpu-panel" style="margin-top: 1.25rem;">
+      <h2>Live GPU run</h2>
+      <div class="gpu-status-row">
+        <div class="spinner" id="gpu-spinner"></div>
+        <div>
+          <div id="gpu-status-text" style="font-weight:600;"></div>
+          <div id="gpu-status-msg" class="loading"></div>
+        </div>
+        <button type="button" id="gpu-cancel" style="margin-left:auto;">Cancel</button>
+      </div>
+      <div class="gpu-log" id="gpu-log"></div>
+      <div class="stats" id="gpu-stats" style="margin-top: 1rem;"></div>
     </div>
 
     <div id="results">
@@ -298,7 +335,7 @@
   </main>
 
   <footer>
-    Rules-based advisor using benchmark_config.yaml · Run <code>make replay</code> to validate on live vLLM
+    Gemini-backed advisor (gemini-2.5-flash) · Recommendations refine automatically once a real GPU run completes
   </footer>
 
   <script>
@@ -306,10 +343,22 @@
     const fileInput = document.getElementById('file');
     const filenameEl = document.getElementById('filename');
     const analyzeBtn = document.getElementById('analyze');
+    const runGpuBtn = document.getElementById('run-gpu');
     const statusEl = document.getElementById('status');
     const formErrors = document.getElementById('form-errors');
     const resultsEl = document.getElementById('results');
+    const gpuPanel = document.getElementById('gpu-panel');
+    const gpuSpinner = document.getElementById('gpu-spinner');
+    const gpuStatusText = document.getElementById('gpu-status-text');
+    const gpuStatusMsg = document.getElementById('gpu-status-msg');
+    const gpuLog = document.getElementById('gpu-log');
+    const gpuStats = document.getElementById('gpu-stats');
+    const gpuCancelBtn = document.getElementById('gpu-cancel');
     let selectedFile = null;
+    let gpuPollTimer = null;
+    let currentJobId = null;
+
+    const GPU_TERMINAL = new Set(['done', 'error', 'cancelled']);
 
     function fmt(n, d = 1) {
       if (n == null || Number.isNaN(Number(n))) return '—';
@@ -330,6 +379,8 @@
       selectedFile = file;
       filenameEl.textContent = file.name + ' (' + (file.size / 1024).toFixed(1) + ' KB)';
       analyzeBtn.disabled = false;
+      runGpuBtn.disabled = true;
+      runGpuBtn.title = 'Analyze first';
       formErrors.innerHTML = '';
     }
 
@@ -350,12 +401,18 @@
 
       const plat = data.platform.recommended_platform;
       const tier = data.tier;
+      const basis = data.used_gpu_result
+        ? '<span class="pill" style="background:rgba(74,222,128,0.15);color:var(--tpu)">Gemini · grounded in real GPU run</span>'
+        : '<span class="pill">Gemini · estimated (run on GPU for real numbers)</span>';
       document.getElementById('classification').innerHTML =
-        '<p><span class="pill">' + tier.label + '</span> closest tier (<code>' + tier.closest_tier + '</code>)</p>' +
+        basis +
+        '<p style="margin-top:0.6rem"><span class="pill">' + tier.label + '</span> closest tier (<code>' + tier.closest_tier + '</code>)</p>' +
         '<p style="color:var(--muted);font-size:0.88rem;margin:0.75rem 0">' + (tier.description || '') + '</p>' +
         '<p>Recommended platform: <span class="pill ' + plat + '">' + plat.toUpperCase() + '</span></p>' +
+        '<p style="font-size:0.85rem;color:var(--muted)">' + (data.platform.summary || '') + '</p>' +
         '<p style="font-size:0.85rem;color:var(--muted)">GPU fit ' + fmt(data.platform.gpu_fit_score, 2) +
-        ' · TPU fit ' + fmt(data.platform.tpu_fit_score, 2) + '</p>';
+        ' · TPU fit ' + fmt(data.platform.tpu_fit_score, 2) +
+        ' · confidence ' + fmt(data.platform.confidence, 2) + '</p>';
 
       document.getElementById('recommendations').innerHTML = data.recommendations.map((r) =>
         '<div class="rec ' + r.priority + '">' +
@@ -376,10 +433,10 @@
       resultsEl.classList.add('visible');
     }
 
-    analyzeBtn.onclick = async () => {
+    async function runAnalyze(gpuResult) {
       if (!selectedFile) return;
       analyzeBtn.disabled = true;
-      statusEl.textContent = 'Analyzing…';
+      statusEl.textContent = gpuResult ? 'Asking Gemini (with real GPU results)…' : 'Asking Gemini…';
       formErrors.innerHTML = '';
       resultsEl.classList.remove('visible');
 
@@ -391,6 +448,7 @@
       if (cur) form.append('current_platform', cur);
       if (tgt) form.append('target_platform', tgt);
       if (model) form.append('model', model);
+      if (gpuResult) form.append('gpu_result', JSON.stringify(gpuResult));
 
       try {
         const res = await fetch('/api/advisor/analyze', { method: 'POST', body: form });
@@ -407,6 +465,8 @@
               (data.warnings.length > 5 ? '<br>…and ' + (data.warnings.length - 5) + ' more' : '') + '</div>';
           }
           renderResults(data);
+          runGpuBtn.disabled = false;
+          runGpuBtn.title = '';
         }
       } catch (err) {
         formErrors.innerHTML = '<div class="errors">Request failed: ' + err.message + '</div>';
@@ -414,6 +474,114 @@
         analyzeBtn.disabled = false;
         statusEl.textContent = '';
       }
+    }
+
+    analyzeBtn.onclick = () => runAnalyze(null);
+
+    function gpuStat(label, value) {
+      return '<div class="stat"><div class="val">' + value + '</div><div class="lbl">' + label + '</div></div>';
+    }
+
+    function renderGpuResult(summary) {
+      const cost = summary.cost_metrics || {};
+      gpuStats.innerHTML = [
+        gpuStat('Output tok/s', fmt(summary.output_tokens_per_second, 1)),
+        gpuStat('p95 TTFT (ms)', fmt(summary.ttft_p95_ms ?? summary.p95_ttft_ms, 0)),
+        gpuStat('Success rate', fmt((summary.success_rate ?? 1) * 100, 1) + '%'),
+        gpuStat('Requests', fmt(summary.total_requests ?? summary.num_requests, 0)),
+        gpuStat('Run cost', '$' + fmt(cost.run_cost_usd, 4)),
+        gpuStat('$ / 1M output tok', '$' + fmt(cost.cost_per_million_output_tokens_usd, 2)),
+      ].join('');
+    }
+
+    function stopGpuPolling() {
+      if (gpuPollTimer) { clearInterval(gpuPollTimer); gpuPollTimer = null; }
+    }
+
+    async function pollGpuJob(jobId) {
+      try {
+        const res = await fetch('/api/advisor/gpu-status/' + jobId);
+        const data = await res.json();
+        if (!data.ok) { gpuStatusMsg.textContent = data.errors ? data.errors.join(', ') : 'Lost track of job.'; return; }
+
+        gpuStatusText.textContent = data.status;
+        gpuStatusMsg.textContent = data.message || '';
+        gpuLog.textContent = (data.log || []).join('\n');
+        gpuLog.scrollTop = gpuLog.scrollHeight;
+
+        if (data.progress && data.progress.total) {
+          gpuStatusMsg.textContent += ' (' + data.progress.completed + '/' + data.progress.total + ' requests)';
+        }
+
+        if (GPU_TERMINAL.has(data.status)) {
+          stopGpuPolling();
+          gpuSpinner.style.display = 'none';
+          gpuCancelBtn.disabled = true;
+          runGpuBtn.disabled = false;
+          if (data.status === 'done' && data.result) {
+            renderGpuResult(data.result);
+            statusEl.textContent = 'GPU run complete — refreshing recommendation with real results…';
+            runAnalyze(data.result);
+          } else if (data.status === 'error') {
+            gpuStats.innerHTML = '';
+            formErrors.innerHTML = '<div class="errors"><strong>GPU run failed:</strong> ' + (data.error || 'unknown error') + '</div>';
+          }
+        }
+      } catch (err) {
+        gpuStatusMsg.textContent = 'Polling failed: ' + err.message;
+      }
+    }
+
+    runGpuBtn.onclick = async () => {
+      if (!selectedFile) return;
+      const ok = confirm(
+        'This will scale up a real GPU node in your GCP project, run this workload, ' +
+        'then scale it back down. It will incur cloud cost and can take up to ~10 minutes. Continue?'
+      );
+      if (!ok) return;
+
+      runGpuBtn.disabled = true;
+      gpuCancelBtn.disabled = false;
+      gpuPanel.classList.add('visible');
+      gpuSpinner.style.display = 'inline-block';
+      gpuStatusText.textContent = 'starting…';
+      gpuStatusMsg.textContent = '';
+      gpuLog.textContent = '';
+      gpuStats.innerHTML = '';
+      formErrors.innerHTML = '';
+
+      const form = new FormData();
+      form.append('file', selectedFile);
+
+      try {
+        const res = await fetch('/api/advisor/run-gpu', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!data.ok) {
+          gpuSpinner.style.display = 'none';
+          gpuStatusText.textContent = 'error';
+          gpuStatusMsg.textContent = (data.errors || ['unknown error']).join(', ');
+          runGpuBtn.disabled = false;
+          return;
+        }
+        currentJobId = data.job_id;
+        stopGpuPolling();
+        gpuPollTimer = setInterval(() => pollGpuJob(currentJobId), 3000);
+        pollGpuJob(currentJobId);
+      } catch (err) {
+        gpuSpinner.style.display = 'none';
+        gpuStatusText.textContent = 'error';
+        gpuStatusMsg.textContent = 'Request failed: ' + err.message;
+        runGpuBtn.disabled = false;
+      }
+    };
+
+    gpuCancelBtn.onclick = async () => {
+      if (!currentJobId) return;
+      gpuCancelBtn.disabled = true;
+      gpuStatusMsg.textContent = 'Cancelling — cleaning up GPU resources…';
+      try {
+        await fetch('/api/advisor/gpu-cancel/' + currentJobId, { method: 'POST' });
+      } catch (err) { /* polling will surface the final state */ }
     };
 
     const themeBtn = document.getElementById('theme');

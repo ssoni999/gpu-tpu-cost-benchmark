@@ -2,6 +2,7 @@
 configs/gpu.env
 configs/tpu.env
 configs/gcs.env
+configs/gemini.env
 .env
 
 workload/prompts.jsonl

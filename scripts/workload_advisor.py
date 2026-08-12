@@ -13,12 +13,11 @@ from typing import Any
 
 from config import (
     load_config,
-    migration_diff,
-    platform_metadata,
     workload_profile,
     workload_tier_ids,
     workloads_catalog,
 )
+from gemini_advisor import GeminiAdvisorError, generate_ai_guidance
 
 MAX_LINES = 10_000
 MAX_BYTES = 10 * 1024 * 1024
@@ -224,244 +223,6 @@ def _classify_tier(
     }
 
 
-def _platform_scores(
-    num_requests: int,
-    total_tokens: float,
-    avg_input_tokens: float,
-    avg_output_tokens: float,
-    rps: float,
-    cfg: dict[str, Any],
-) -> dict[str, Any]:
-    pricing = cfg.get("pricing", {})
-    gpu_hourly = float(pricing.get("gpu_accelerator_hourly_usd", 0.35)) + float(
-        pricing.get("gpu_vm_hourly_usd", 0.10)
-    )
-    tpu_hourly = float(pricing.get("tpu_accelerator_hourly_usd", 1.20)) + float(
-        pricing.get("tpu_vm_hourly_usd", 0.0)
-    )
-
-    gpu_meta = platform_metadata(cfg, "gpu")
-    tpu_meta = platform_metadata(cfg, "tpu")
-    gpu_tflops = float(gpu_meta.get("peak_tflops") or 65)
-    tpu_tflops = float(tpu_meta.get("peak_tflops") or 197)
-
-    # Heuristic: short/low-volume favors GPU hourly rate; sustained/high-token favors TPU FLOPs.
-    volume_factor = min(1.0, num_requests / 100.0)
-    context_factor = min(1.0, avg_input_tokens / 2048.0)
-    sustained = min(1.0, rps * 60 / 50.0)  # >50 req/min → sustained
-
-    gpu_fit = 0.55
-    tpu_fit = 0.45
-    if avg_input_tokens >= 1536 or num_requests >= 150:
-        tpu_fit += 0.25
-        gpu_fit -= 0.15
-    if num_requests <= 40 and avg_input_tokens <= 512:
-        gpu_fit += 0.25
-        tpu_fit -= 0.15
-    if rps >= 1.0:
-        tpu_fit += 0.1 * sustained
-    gpu_fit += 0.1 * (1 - context_factor) * (1 - volume_factor)
-    tpu_fit += 0.15 * context_factor * volume_factor
-
-    gpu_cost_index = gpu_hourly / max(gpu_tflops, 1)
-    tpu_cost_index = tpu_hourly / max(tpu_tflops, 1)
-    cost_winner = "gpu" if gpu_cost_index <= tpu_cost_index else "tpu"
-    perf_winner = "tpu" if tpu_tflops > gpu_tflops else "gpu"
-
-    recommended = "tpu" if tpu_fit >= gpu_fit else "gpu"
-    return {
-        "recommended_platform": recommended,
-        "confidence": round(abs(tpu_fit - gpu_fit), 2),
-        "gpu_fit_score": round(gpu_fit, 2),
-        "tpu_fit_score": round(tpu_fit, 2),
-        "cost_efficiency_leader": cost_winner,
-        "peak_throughput_leader": perf_winner,
-        "estimated_hourly_usd": {"gpu": gpu_hourly, "tpu": tpu_hourly},
-        "total_tokens_estimate": int(total_tokens),
-    }
-
-
-def _build_recommendations(
-    stats: dict[str, Any],
-    prefix_stats: dict[str, Any],
-    tier_info: dict[str, Any],
-    platform_info: dict[str, Any],
-    cfg: dict[str, Any],
-    user_context: dict[str, Any],
-) -> list[dict[str, Any]]:
-    recs: list[dict[str, Any]] = []
-    gpu_serving = cfg.get("gpu", {}).get("serving", {})
-    tpu_serving = cfg.get("tpu", {}).get("serving", {})
-    max_model_len = int(gpu_serving.get("max_model_len") or 4096)
-
-    recs.append({
-        "priority": "high",
-        "category": "platform",
-        "title": f"Primary platform: {platform_info['recommended_platform'].upper()}",
-        "rationale": (
-            f"Based on {stats['num_requests']} requests, ~{stats['avg_input_tokens']} input tokens/request, "
-            f"and ~{stats['requests_per_second']:.2f} req/s, "
-            f"{platform_info['recommended_platform'].upper()} aligns better with this workload shape."
-        ),
-        "actions": [
-            f"Run `make replay TARGET=<vllm-url> PLATFORM={platform_info['recommended_platform']} "
-            f"TIER={tier_info['closest_tier']}` to benchmark with the canonical trace format.",
-            "Compare both platforms with the same trace before committing to migration.",
-        ],
-    })
-
-    if stats["p95_input_tokens"] > max_model_len * 0.85:
-        recs.append({
-            "priority": "critical",
-            "category": "context",
-            "title": "Context length exceeds safe serving headroom",
-            "rationale": (
-                f"p95 input is ~{stats['p95_input_tokens']} tokens; configured max_model_len is {max_model_len}. "
-                "Requests near the limit increase OOM risk and latency variance."
-            ),
-            "actions": [
-                "Truncate or summarize prompts above 75% of max_model_len before inference.",
-                f"If truncation is unacceptable, raise --max-model-len (GPU/TPU currently {max_model_len}).",
-                "Split long documents into chunked retrieval steps instead of single-shot prompts.",
-            ],
-        })
-
-    if prefix_stats["detected"] and prefix_stats["avg_prefix_tokens"] >= 128:
-        recs.append({
-            "priority": "high",
-            "category": "caching",
-            "title": "Enable prefix / KV-cache reuse",
-            "rationale": (
-                f"{int(prefix_stats['ratio'] * 100)}% of prompts share a common prefix "
-                f"(~{prefix_stats['avg_prefix_tokens']} tokens)."
-            ),
-            "actions": [
-                "Structure requests with a stable system prefix separated by `\\n\\n---\\n\\n` (this repo's trace format).",
-                "Enable vLLM prefix caching or chunked prefill for repeated prefixes.",
-                "Batch requests with identical prefixes to maximize cache hits.",
-            ],
-        })
-
-    if stats["offset_coverage"] < 0.5:
-        recs.append({
-            "priority": "medium",
-            "category": "scheduling",
-            "title": "Add arrival-time offsets for realistic replay",
-            "rationale": "Fewer than half of requests include non-zero offsets; burst replay may overestimate queue pressure.",
-            "actions": [
-                "Export request timestamps and map to `offset` seconds from trace start.",
-                "Use `make trace` or spread offsets across span_seconds for load testing.",
-            ],
-        })
-
-    if stats["max_output_tokens"] > int(gpu_serving.get("max_num_batched_tokens", 4096) / 4):
-        recs.append({
-            "priority": "medium",
-            "category": "batching",
-            "title": "Tune max_num_batched_tokens for output length",
-            "rationale": f"Peak max_tokens={stats['max_output_tokens']} may limit batching efficiency.",
-            "actions": [
-                f"Review --max-num-batched-tokens (currently {gpu_serving.get('max_num_batched_tokens')}).",
-                "Cap max_tokens to the p95 completion length observed in production logs.",
-            ],
-        })
-
-    if user_context.get("current_platform") and user_context.get("target_platform"):
-        src = user_context["current_platform"]
-        tgt = user_context["target_platform"]
-        if src != tgt:
-            recs.append({
-                "priority": "high",
-                "category": "migration",
-                "title": f"Migrate {src.upper()} → {tgt.upper()}",
-                "rationale": "Cross-platform migration requires aligned serving flags and Kubernetes manifests.",
-                "actions": [
-                    f"Regenerate manifests: `make manifests PLATFORM={tgt}`",
-                    f"Deploy vLLM image from benchmark_config ({platform_metadata(cfg, tgt)['docker_image']}).",
-                    "Re-run replay on both platforms with identical trace before cutover.",
-                ],
-            })
-
-    if tier_info["closest_tier"] == "high":
-        recs.append({
-            "priority": "medium",
-            "category": "cost",
-            "title": "Complex tier — validate TPU total cost of ownership",
-            "rationale": "High-volume long-context workloads often favor TPU throughput but need cost verification.",
-            "actions": [
-                "Compare $/1M output tokens from replay cost_metrics on both platforms.",
-                "Watch p95 TTFT and batch size under sustained load.",
-            ],
-        })
-
-    order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-    recs.sort(key=lambda r: order.get(r["priority"], 9))
-    return recs
-
-
-def _build_migration_steps(
-    cfg: dict[str, Any],
-    tier_info: dict[str, Any],
-    platform_info: dict[str, Any],
-    user_context: dict[str, Any],
-) -> list[dict[str, Any]]:
-    target = user_context.get("target_platform") or platform_info["recommended_platform"]
-    source = user_context.get("current_platform") or ("gpu" if target == "tpu" else "tpu")
-    diff = migration_diff(cfg)
-    changed = [row for row in diff if not row.get("same")]
-
-    steps: list[dict[str, Any]] = [
-        {
-            "phase": "Assess",
-            "title": "Normalize workload trace",
-            "details": [
-                "Ensure each line has `prompt`, `max_tokens`, and optional `offset` (seconds from start).",
-                f"Closest benchmark tier: **{tier_info['label']}** (`{tier_info['closest_tier']}`).",
-                "Save as JSONL and validate with the advisor before replay.",
-            ],
-        },
-        {
-            "phase": "Prepare",
-            "title": f"Align {source.upper()} and {target.upper()} serving config",
-            "details": [
-                f"Model: `{cfg['model']}` (same on both platforms).",
-                f"Target docker image: `{platform_metadata(cfg, target)['docker_image']}`.",
-                "Diff serving flags: "
-                + ", ".join(f"{r['key']}" for r in changed if r["category"] == "serving")[:200]
-                or "max_model_len, batching limits",
-            ],
-        },
-        {
-            "phase": "Deploy",
-            "title": f"Provision {target.upper()} cluster",
-            "details": [
-                f"`make manifests` → apply `{cfg[target]['k8s']['output_file']}`.",
-                f"Node pool: {cfg[target]['node_pool']['name']} ({cfg[target]['node_pool']['machine_type']}).",
-                "Port-forward vLLM: `kubectl port-forward svc/<service> 8000:8000`.",
-            ],
-        },
-        {
-            "phase": "Validate",
-            "title": "Replay and compare metrics",
-            "details": [
-                f"`make replay TARGET=http://127.0.0.1:8000 PLATFORM={target} TIER={tier_info['closest_tier']}`",
-                "Check tok/s, p95 TTFT, success rate, and $/1M tokens in the results UI.",
-                "Only migrate production traffic after SLO parity on the same trace.",
-            ],
-        },
-        {
-            "phase": "Cutover",
-            "title": "Progressive traffic shift",
-            "details": [
-                "Canary 5–10% traffic; monitor error rate and latency SLOs.",
-                "Keep rollback manifest for source platform for one release cycle.",
-                "Upload replay JSON to GCS (`make upload-results`) for team visibility.",
-            ],
-        },
-    ]
-    return steps
-
-
 def analyze_workload(
     content: str,
     *,
@@ -470,6 +231,7 @@ def analyze_workload(
     target_platform: str | None = None,
     model: str | None = None,
     cfg: dict[str, Any] | None = None,
+    gpu_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     cfg = cfg or load_config()
     parsed = parse_workload_text(content, filename=filename)
@@ -494,11 +256,6 @@ def analyze_workload(
     avg_out = statistics.mean(output_tokens)
     tier_info = _classify_tier(len(records), avg_in, avg_out, cfg)
 
-    total_tokens = sum(input_tokens) + sum(output_tokens)
-    platform_info = _platform_scores(
-        len(records), total_tokens, avg_in, avg_out, rps, cfg,
-    )
-
     user_context = {
         "current_platform": (current_platform or "").lower() or None,
         "target_platform": (target_platform or "").lower() or None,
@@ -517,6 +274,7 @@ def analyze_workload(
         "avg_output_tokens": round(avg_out, 1),
         "p95_output_tokens": round(_percentile(output_tokens, 95), 1),
         "max_output_tokens": max(output_tokens),
+        "total_tokens_estimate": int(sum(input_tokens) + sum(output_tokens)),
         "span_seconds": round(span, 2),
         "requests_per_second": round(rps, 3),
         "offset_coverage": round(sum(1 for o in offsets if o > 0) / len(offsets), 3),
@@ -524,10 +282,12 @@ def analyze_workload(
         "shared_prefix": prefix_stats,
     }
 
-    recommendations = _build_recommendations(
-        stats, prefix_stats, tier_info, platform_info, cfg, user_context,
-    )
-    migration_steps = _build_migration_steps(cfg, tier_info, platform_info, user_context)
+    try:
+        guidance = generate_ai_guidance(
+            stats, tier_info, cfg, user_context=user_context, gpu_result=gpu_result,
+        )
+    except GeminiAdvisorError as exc:
+        return {"ok": False, "errors": [str(exc)], "warnings": parsed.warnings}
 
     normalized_sample = [
         {
@@ -546,10 +306,12 @@ def analyze_workload(
         "warnings": parsed.warnings,
         "stats": stats,
         "tier": tier_info,
-        "platform": platform_info,
-        "recommendations": recommendations,
-        "migration_steps": migration_steps,
+        "platform": guidance["platform"],
+        "recommendations": guidance["recommendations"],
+        "migration_steps": guidance["migration_steps"],
         "sample_records": normalized_sample,
+        "ai_generated": True,
+        "used_gpu_result": gpu_result is not None,
         "trace_format": {
             "required_fields": ["prompt", "max_tokens"],
             "optional_fields": ["offset", "category", "id"],

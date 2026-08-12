@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import time
 from pathlib import Path
@@ -60,6 +61,7 @@ from gcs_results import (
 )
 from workload_projection import resolve_tier_replay
 from workload_advisor import MAX_BYTES, analyze_workload
+import gpu_ondemand
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -411,6 +413,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
         model: str | None = None
         content: str | None = None
         filename = "upload.jsonl"
+        gpu_result: dict[str, Any] | None = None
 
         if request.content_type and "multipart/form-data" in request.content_type:
             reader = await request.multipart()
@@ -434,6 +437,10 @@ def build_app(backend: ResultsBackend) -> web.Application:
                     target_platform = (await part.read()).decode("utf-8", errors="replace").strip() or None
                 elif name == "model":
                     model = (await part.read()).decode("utf-8", errors="replace").strip() or None
+                elif name == "gpu_result":
+                    raw_gpu = (await part.read()).decode("utf-8", errors="replace")
+                    with contextlib.suppress(json.JSONDecodeError):
+                        gpu_result = json.loads(raw_gpu) if raw_gpu.strip() else None
         else:
             try:
                 body = await request.json()
@@ -444,6 +451,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
             current_platform = body.get("current_platform")
             target_platform = body.get("target_platform")
             model = body.get("model")
+            gpu_result = body.get("gpu_result")
             if content and len(content.encode("utf-8")) > MAX_BYTES:
                 return web.json_response(
                     {"ok": False, "errors": [f"Payload too large (max {MAX_BYTES // (1024*1024)} MB)."]},
@@ -453,15 +461,66 @@ def build_app(backend: ResultsBackend) -> web.Application:
         if not content:
             return web.json_response({"ok": False, "errors": ["No workload file provided."]}, status=400)
 
-        result = analyze_workload(
+        result = await asyncio.to_thread(
+            analyze_workload,
             content,
             filename=filename,
             current_platform=current_platform,
             target_platform=target_platform,
             model=model,
+            gpu_result=gpu_result,
         )
         status = 200 if result.get("ok") else 422
         return web.json_response(result, status=status)
+
+    async def handle_advisor_run_gpu(request: web.Request) -> web.Response:
+        content: str | None = None
+        filename = "upload.jsonl"
+
+        if request.content_type and "multipart/form-data" in request.content_type:
+            reader = await request.multipart()
+            while True:
+                part = await reader.next()
+                if part is None:
+                    break
+                if part.name == "file":
+                    filename = part.filename or filename
+                    raw = await part.read()
+                    if len(raw) > MAX_BYTES:
+                        return web.json_response(
+                            {"ok": False, "errors": [f"File too large (max {MAX_BYTES // (1024*1024)} MB)."]},
+                            status=413,
+                        )
+                    content = raw.decode("utf-8", errors="replace")
+        else:
+            try:
+                body = await request.json()
+            except json.JSONDecodeError:
+                return web.json_response({"ok": False, "errors": ["Expected multipart file or JSON body."]}, status=400)
+            content = body.get("content")
+            filename = body.get("filename") or filename
+
+        if not content:
+            return web.json_response({"ok": False, "errors": ["No workload file provided."]}, status=400)
+
+        try:
+            job = gpu_ondemand.start_job(content, filename)
+        except gpu_ondemand.GpuJobError as exc:
+            return web.json_response({"ok": False, "errors": [str(exc)]}, status=409)
+
+        return web.json_response({"ok": True, "job_id": job.id})
+
+    async def handle_advisor_gpu_status(request: web.Request) -> web.Response:
+        job = gpu_ondemand.get_job(request.match_info["job_id"])
+        if job is None:
+            return web.json_response({"ok": False, "errors": ["Unknown job id."]}, status=404)
+        return web.json_response({"ok": True, **job.to_public_dict()})
+
+    async def handle_advisor_gpu_cancel(request: web.Request) -> web.Response:
+        job = gpu_ondemand.cancel_job(request.match_info["job_id"])
+        if job is None:
+            return web.json_response({"ok": False, "errors": ["Unknown job id."]}, status=404)
+        return web.json_response({"ok": True, **job.to_public_dict()})
 
     async def handle_advisor_schema(_request: web.Request) -> web.Response:
         return web.json_response({
@@ -642,6 +701,9 @@ def build_app(backend: ResultsBackend) -> web.Application:
     app.router.add_get("/", handle_index)
     app.router.add_get("/advisor", handle_advisor_page)
     app.router.add_post("/api/advisor/analyze", handle_advisor_analyze)
+    app.router.add_post("/api/advisor/run-gpu", handle_advisor_run_gpu)
+    app.router.add_get("/api/advisor/gpu-status/{job_id}", handle_advisor_gpu_status)
+    app.router.add_post("/api/advisor/gpu-cancel/{job_id}", handle_advisor_gpu_cancel)
     app.router.add_get("/api/advisor/schema", handle_advisor_schema)
     app.router.add_get("/api/status", handle_status)
     app.router.add_get("/api/gcs/inspect", handle_gcs_inspect)
