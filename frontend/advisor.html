@@ -291,6 +291,7 @@
       <div style="margin-top: 1rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;">
         <button type="button" class="primary" id="analyze" disabled>Analyze workload</button>
         <button type="button" id="run-gpu" disabled title="Analyze first">Run on real GPU</button>
+        <button type="button" id="gpu-scale-down" title="Delete the GPU deployment so the node pool scales back to 0">Scale down GPU</button>
         <span class="loading" id="status"></span>
       </div>
       <div id="form-errors"></div>
@@ -354,6 +355,7 @@
     const gpuLog = document.getElementById('gpu-log');
     const gpuStats = document.getElementById('gpu-stats');
     const gpuCancelBtn = document.getElementById('gpu-cancel');
+    const gpuScaleDownBtn = document.getElementById('gpu-scale-down');
     let selectedFile = null;
     let gpuPollTimer = null;
     let currentJobId = null;
@@ -535,8 +537,9 @@
     runGpuBtn.onclick = async () => {
       if (!selectedFile) return;
       const ok = confirm(
-        'This will scale up a real GPU node in your GCP project, run this workload, ' +
-        'then scale it back down. It will incur cloud cost and can take up to ~10 minutes. Continue?'
+        'This will scale up a real GPU node in your GCP project (or reuse one already running) and run this workload. ' +
+        'The GPU is left running afterward for faster reuse — it will keep incurring cloud cost until you click ' +
+        '"Scale down GPU". First-time provisioning can take up to ~10 minutes. Continue?'
       );
       if (!ok) return;
 
@@ -582,6 +585,26 @@
       try {
         await fetch('/api/advisor/gpu-cancel/' + currentJobId, { method: 'POST' });
       } catch (err) { /* polling will surface the final state */ }
+    };
+
+    gpuScaleDownBtn.onclick = async () => {
+      const ok = confirm('Delete the GPU deployment now? The node pool will scale back to 0 and the next "Run on real GPU" click will need to cold-start again.');
+      if (!ok) return;
+      gpuScaleDownBtn.disabled = true;
+      const prevText = gpuScaleDownBtn.textContent;
+      gpuScaleDownBtn.textContent = 'Scaling down…';
+      try {
+        const res = await fetch('/api/advisor/gpu-scale-down', { method: 'POST' });
+        const data = await res.json();
+        formErrors.innerHTML = data.ok
+          ? '<div class="warnings">' + data.message + '</div>'
+          : '<div class="errors">' + (data.errors || ['unknown error']).join(', ') + '</div>';
+      } catch (err) {
+        formErrors.innerHTML = '<div class="errors">Request failed: ' + err.message + '</div>';
+      } finally {
+        gpuScaleDownBtn.disabled = false;
+        gpuScaleDownBtn.textContent = prevText;
+      }
     };
 
     const themeBtn = document.getElementById('theme');

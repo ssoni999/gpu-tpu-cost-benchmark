@@ -539,6 +539,10 @@ def build_app(backend: ResultsBackend) -> web.Application:
             return web.json_response({"ok": False, "errors": ["Unknown job id."]}, status=404)
         return web.json_response({"ok": True, **job.to_public_dict()})
 
+    async def handle_advisor_gpu_scale_down(_request: web.Request) -> web.Response:
+        message = await gpu_ondemand.scale_down_gpu()
+        return web.json_response({"ok": True, "message": message})
+
     async def handle_advisor_schema(_request: web.Request) -> web.Response:
         return web.json_response({
             "format": "jsonl",
@@ -721,6 +725,7 @@ def build_app(backend: ResultsBackend) -> web.Application:
     app.router.add_post("/api/advisor/run-gpu", handle_advisor_run_gpu)
     app.router.add_get("/api/advisor/gpu-status/{job_id}", handle_advisor_gpu_status)
     app.router.add_post("/api/advisor/gpu-cancel/{job_id}", handle_advisor_gpu_cancel)
+    app.router.add_post("/api/advisor/gpu-scale-down", handle_advisor_gpu_scale_down)
     app.router.add_get("/api/advisor/schema", handle_advisor_schema)
     app.router.add_get("/api/status", handle_status)
     app.router.add_get("/api/gcs/inspect", handle_gcs_inspect)

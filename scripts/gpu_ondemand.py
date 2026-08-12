@@ -3,9 +3,14 @@
 
 Scales the configured GKE GPU node pool from 0 -> 1 by applying the vLLM
 Deployment/Service manifest (the cluster autoscaler picks up the pending pod
-and provisions a node), waits for the server to become reachable, replays an
-uploaded workload trace against it with replay.py's own request engine, then
-tears the deployment back down so the node pool scales to 0 again.
+and provisions a node), waits for the server to become reachable, then replays
+an uploaded workload trace against it with replay.py's own request engine.
+
+The deployment is left running after each job so a subsequent run can skip
+straight to replay if the pod is already warm (kubectl apply is idempotent,
+and the pod/server wait loops return immediately once ready). Call
+scale_down_gpu() explicitly to tear it down and let the node pool drop back
+to 0 — nothing does this automatically.
 
 Requires `gcloud` and `kubectl` on PATH and an already-authenticated gcloud
 session (this is designed to run inside Cloud Shell).
@@ -186,16 +191,34 @@ async def _wait_for_server(job: GpuJob, local_port: int, deadline: float) -> Non
         await asyncio.sleep(SERVER_POLL_INTERVAL_S)
 
 
-async def _cleanup(job: GpuJob) -> None:
+async def _stop_port_forward(job: GpuJob) -> None:
+    """Kill this job's local kubectl port-forward. Does NOT touch the cluster deployment —
+    the GPU deployment is left running (warm) so the next job can skip straight to replay."""
     if job._pf_proc is not None:
         with contextlib.suppress(ProcessLookupError):
             job._pf_proc.kill()
         with contextlib.suppress(Exception):
             await job._pf_proc.wait()
         job._pf_proc = None
-    if job._manifest_path is not None:
-        with contextlib.suppress(GpuJobError):
-            await _run(["kubectl", "delete", "-f", str(job._manifest_path), "--ignore-not-found"], timeout=60)
+
+
+def _gpu_manifest_path(cfg: dict[str, Any] | None = None) -> Path:
+    cfg = cfg or load_config()
+    return ROOT / platform_block(cfg, "gpu")["k8s"]["output_file"]
+
+
+async def scale_down_gpu() -> str:
+    """Manually tear down the GPU deployment so the node pool can scale back to 0.
+
+    Nothing calls this automatically anymore (see _run_job) — the deployment is left
+    warm after each run so subsequent runs can skip provisioning. Call this explicitly
+    when done to stop paying for the idle node.
+    """
+    manifest_path = _gpu_manifest_path()
+    if not manifest_path.exists():
+        return "No GPU manifest found on disk — nothing to scale down."
+    await _run(["kubectl", "delete", "-f", str(manifest_path), "--ignore-not-found"], timeout=60)
+    return "GPU deployment deleted — node pool will scale back to 0 after GKE's idle grace period."
 
 
 async def _run_job(job: GpuJob, content: str, filename: str) -> None:
@@ -286,8 +309,8 @@ async def _run_job(job: GpuJob, content: str, filename: str) -> None:
         final_status = "error"
         final_message = job.error
     finally:
-        _set(job, "cleaning_up", "Deleting GPU deployment (node pool scales back to 0)…")
-        await _cleanup(job)
+        _set(job, "cleaning_up", "Closing port-forward (GPU deployment left running for reuse)…")
+        await _stop_port_forward(job)
         _set(job, final_status, final_message)
         if _ACTIVE_JOB_ID == job.id:
             _ACTIVE_JOB_ID = None
