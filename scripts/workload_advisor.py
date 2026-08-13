@@ -231,7 +231,6 @@ def analyze_workload(
     target_platform: str | None = None,
     model: str | None = None,
     cfg: dict[str, Any] | None = None,
-    gpu_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     cfg = cfg or load_config()
     parsed = parse_workload_text(content, filename=filename)
@@ -284,7 +283,7 @@ def analyze_workload(
 
     try:
         guidance = generate_ai_guidance(
-            stats, tier_info, cfg, user_context=user_context, gpu_result=gpu_result,
+            stats, tier_info, cfg, user_context=user_context,
         )
     except GeminiAdvisorError as exc:
         return {"ok": False, "errors": [str(exc)], "warnings": parsed.warnings}
@@ -311,7 +310,6 @@ def analyze_workload(
         "migration_steps": guidance["migration_steps"],
         "sample_records": normalized_sample,
         "ai_generated": True,
-        "used_gpu_result": gpu_result is not None,
         "trace_format": {
             "required_fields": ["prompt", "max_tokens"],
             "optional_fields": ["offset", "category", "id"],

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Gemini-backed replacement for the rule-based platform advisor.
 
-Builds a prompt from parsed workload stats, the GPU/TPU platform catalog, and
-(optionally) a real on-demand GPU replay result, then asks Gemini for a
-structured GPU vs TPU recommendation in the same shape the advisor UI already
-renders (platform fit scores, prioritized recommendations, migration steps).
+Builds a prompt from parsed workload stats and the GPU/TPU platform catalog,
+then asks Gemini for a structured GPU vs TPU recommendation in the same shape
+the advisor UI already renders (platform fit scores, prioritized
+recommendations, migration steps).
 """
 
 from __future__ import annotations
 
 import json
 import os
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -72,15 +72,13 @@ Recommend whether to serve the workload described below on GPU or TPU, and produ
 
 ## TPU platform (catalog specs — accelerator, pricing, node pool)
 {tpu_json}
-{gpu_result_section}
+
 ## User-provided context
 {user_context_json}
 
 ## Instructions
-- If a REAL measured result is provided above for a platform, weigh it more heavily than catalog/estimated specs FOR THAT SAME PLATFORM — it is ground truth for this exact workload.
-- This tool currently only has an on-demand benchmark path for GPU, not TPU. TPU will therefore usually only have catalog specs, never a real run. This is a tooling gap, not evidence about TPU's actual performance — do not treat "no real TPU run" as a strike against TPU. Evaluate TPU's catalog specs (throughput, cost, power) on equal footing, at face value, the same way you would if a real TPU run showed similar numbers.
 - Do not let ordering, verbosity, or how much detail is given about one platform influence recommended_platform — weigh GPU and TPU strictly on the numeric evidence (throughput, cost, latency) provided for each.
-- If no real measured results are provided for either platform, base the recommendation on workload shape (request volume, context length, output length, request rate) against each platform's throughput/cost profile from catalog specs alone.
+- Base the recommendation on workload shape (request volume, context length, output length, request rate) against each platform's throughput/cost profile from catalog specs.
 - gpu_fit_score and tpu_fit_score are 0-1 and do not need to sum to 1.
 - confidence is 0-1, how sure you are in recommended_platform.
 - Produce 3-6 recommendations covering platform choice, context-length risk, prefix/KV-cache opportunities, batching/throughput tuning, and cost, ordered most important first.
@@ -139,26 +137,7 @@ def _build_prompt(
     tier_info: dict[str, Any],
     cfg: dict[str, Any],
     user_context: dict[str, Any],
-    gpu_result: Optional[dict[str, Any]],
 ) -> str:
-    gpu_result_section = ""
-    if gpu_result:
-        cost = gpu_result.get("cost_metrics", {})
-        measured = {
-            "output_tokens_per_second": gpu_result.get("output_tokens_per_second"),
-            "ttft_p95_ms": gpu_result.get("ttft_p95_ms") or gpu_result.get("p95_ttft_ms"),
-            "success_rate": gpu_result.get("success_rate"),
-            "total_requests": gpu_result.get("total_requests") or gpu_result.get("num_requests"),
-            "run_cost_usd": cost.get("run_cost_usd"),
-            "cost_per_million_output_tokens_usd": cost.get("cost_per_million_output_tokens_usd"),
-            "cost_per_output_token_usd": cost.get("cost_per_output_token_usd"),
-            "performance_per_dollar_tok_s": cost.get("performance_per_dollar_tok_s"),
-        }
-        gpu_result_section = (
-            "\n## REAL measured GPU benchmark result (just run on-demand for this exact workload)\n"
-            f"{json.dumps(measured, indent=2, default=str)}\n"
-        )
-
     return _PROMPT_TEMPLATE.format(
         model=cfg.get("model", "unknown"),
         stats_json=json.dumps(stats, indent=2, default=str),
@@ -169,7 +148,6 @@ def _build_prompt(
         ),
         gpu_json=json.dumps(_platform_context(cfg, "gpu"), indent=2, default=str),
         tpu_json=json.dumps(_platform_context(cfg, "tpu"), indent=2, default=str),
-        gpu_result_section=gpu_result_section,
         user_context_json=json.dumps(user_context, indent=2, default=str),
     )
 
@@ -180,14 +158,13 @@ def generate_ai_guidance(
     cfg: dict[str, Any],
     *,
     user_context: dict[str, Any] | None = None,
-    gpu_result: dict[str, Any] | None = None,
     model_name: str = DEFAULT_MODEL,
 ) -> dict[str, Any]:
     from google import genai
     from google.genai import types
 
     api_key = _gemini_api_key()
-    prompt = _build_prompt(stats, tier_info, cfg, user_context or {}, gpu_result)
+    prompt = _build_prompt(stats, tier_info, cfg, user_context or {})
 
     try:
         client = genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
