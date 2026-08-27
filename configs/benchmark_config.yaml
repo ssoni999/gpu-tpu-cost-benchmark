@@ -30,7 +30,7 @@ workloads:
     num_prompts: 100
     input_tokens: 1024
     max_input_tokens: 30000
-    output_tokens: 128
+    output_tokens: 256
     trace_span_seconds: 120
     gpu_throughput_factor: 0.92
     tpu_throughput_factor: 0.78
@@ -41,7 +41,7 @@ workloads:
     num_prompts: 100
     input_tokens: 1024
     max_input_tokens: 120000
-    output_tokens: 128
+    output_tokens: 512
     gpu_throughput_factor: 1.0
     tpu_throughput_factor: 1.0
   high:
@@ -51,7 +51,7 @@ workloads:
     num_prompts: 200
     input_tokens: 2048
     max_input_tokens: 400000
-    output_tokens: 256
+    output_tokens: 1024
     trace_span_seconds: 600
     shared_prefix_tokens: 128
     gpu_throughput_factor: 1.08
