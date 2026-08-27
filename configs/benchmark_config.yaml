@@ -114,26 +114,26 @@ gpu:
 
 tpu:
   platform: tpu
-  generation: v5e
-  accelerator: v5litepod-1
+  generation: v6e
+  accelerator: v6e-1
   accelerator_count: 1
-  runtime_version: v2-alpha-tpuv5-lite
-  power_watts: 200
+  runtime_version: v2-alpha-tpuv6e
+  power_watts: 300
   framework: vllm
-  peak_tflops: 197
+  peak_tflops: 918
   node_pool:
-    name: tpu-v5-lite-podslice
+    name: tpu-v6e-slice-pool
     node_count: 1
-    machine_type: v5e-1x1 (CT5LP)
-    vcpu: 24
-    system_memory_gib: 48
-    accelerator_memory_gib: 16
-    power_watts: 200
+    machine_type: v6e-1x1 (CT6E)
+    vcpu: 44
+    system_memory_gib: 176
+    accelerator_memory_gib: 32
+    power_watts: 300
     topology: 1x1
-    interconnect: ICI (400 Gbps/chip)
+    interconnect: ICI (800 Gbps/chip)
     network_gbps: 100
   docker_image: vllm/vllm-tpu:latest
-  # Official tpu-recipes Qwen3 guide targets v6e; this project pins v5e (see README).
+  # Official tpu-recipes Qwen3 guide targets v6e (Trillium); this project now matches it (see README).
   recipe_ref: ../tpu-recipes/inference/trillium/vLLM/Qwen3/README.md
   k8s:
     deployment_name: tiny-model-server
@@ -144,7 +144,7 @@ tpu:
     output_file: tiny-model.yaml
   infra:
     node_selector:
-      cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
+      cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
       cloud.google.com/gke-tpu-topology: 1x1
     tolerations:
       - key: cloud.google.com/gke-tpu-accelerator
@@ -168,19 +168,19 @@ pricing:
   # Override at runtime via gpu.env / tpu.env → environment.json.
   gpu_accelerator_hourly_usd: 0.52
   gpu_vm_hourly_usd: 0.19
-  tpu_accelerator_hourly_usd: 1.20
+  tpu_accelerator_hourly_usd: 2.70
   tpu_vm_hourly_usd: 0.0
   gpu_tdp_watts: 72          # NVIDIA L4 chip TDP (approx)
-  tpu_tdp_watts: 200         # TPU v5e single chip (approx)
+  tpu_tdp_watts: 300         # TPU v6e (Trillium) single chip (approx)
 
 # pricing:
 #   # Spot pricing defaults for NVIDIA L4 on GCP (us-central1)
 #   gpu_accelerator_hourly_usd: 0.22   # Spot hourly price for 1x NVIDIA L4 GPU chip
 #   gpu_vm_hourly_usd: 0.05            # Spot hourly price for base 4 vCPU / 16GB RAM compute
-#   tpu_accelerator_hourly_usd: 0.36   # Spot hourly price for 1x TPU v5e chip (approx.)
+#   tpu_accelerator_hourly_usd: 0.81   # Spot hourly price for 1x TPU v6e chip (approx.)
 #   tpu_vm_hourly_usd: 0.0
 #   gpu_tdp_watts: 72                  # NVIDIA L4 chip TDP (72W)
-#   tpu_tdp_watts: 200                 # TPU v5e single chip (approx)
+#   tpu_tdp_watts: 300                 # TPU v6e (Trillium) single chip (approx)
 storage:
   gcs:
     bucket: gpu-tpu-benchmark-storage

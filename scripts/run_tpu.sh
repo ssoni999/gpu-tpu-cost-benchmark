@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run on a TPU v5e VM. Provisioning uses v5litepod-1 (single chip for Qwen3-4B).
+# Run on a TPU v6e (Trillium) VM. Provisioning uses v6e-1 (single chip for Qwen3-4B).
 # Benchmark parameters come from benchmark_config.yaml, not tpu-recipes defaults.
 set -euo pipefail
 
@@ -19,13 +19,13 @@ eval "$(python3 "${ROOT}/scripts/config.py" --shell)"
 : "${PROJECT_ID:?Set PROJECT_ID in configs/tpu.env}"
 : "${ZONE:?Set ZONE in configs/tpu.env}"
 : "${TPU_NAME:?Set TPU_NAME in configs/tpu.env}"
-TPU_ACCELERATOR_TYPE="${TPU_ACCELERATOR_TYPE:-v5litepod-1}"
-TPU_RUNTIME_VERSION="${TPU_RUNTIME_VERSION:-v2-alpha-tpuv5-lite}"
+TPU_ACCELERATOR_TYPE="${TPU_ACCELERATOR_TYPE:-v6e-1}"
+TPU_RUNTIME_VERSION="${TPU_RUNTIME_VERSION:-v2-alpha-tpuv6e}"
 
 print_provision_commands() {
   cat <<EOF
-# --- Provision TPU v5e (queued resource, recommended) ---
-gcloud alpha compute tpus queued-resources create ${QR_ID:-${USER}-v5e-qr} \\
+# --- Provision TPU v6e (queued resource, recommended) ---
+gcloud alpha compute tpus queued-resources create ${QR_ID:-${USER}-v6e-qr} \\
   --node-id ${TPU_NAME} \\
   --project ${PROJECT_ID} \\
   --zone ${ZONE} \\
@@ -71,15 +71,15 @@ if os.environ.get("TPU_ACCELERATOR_TYPE", "").endswith("-4"):
     count = 4
 elif os.environ.get("TPU_ACCELERATOR_TYPE", "").endswith("-8"):
     count = 8
-elif os.environ.get("TPU_ACCELERATOR_TYPE", "") == "v5litepod-1":
+elif os.environ.get("TPU_ACCELERATOR_TYPE", "") == "v6e-1":
     count = 1
 env = {
     "platform": "tpu",
-    "generation": "v5e",
+    "generation": "v6e",
     "project_id": os.environ.get("PROJECT_ID"),
     "zone": os.environ.get("ZONE"),
     "tpu_name": os.environ.get("TPU_NAME"),
-    "accelerator": os.environ.get("TPU_ACCELERATOR_TYPE", "v5litepod-1"),
+    "accelerator": os.environ.get("TPU_ACCELERATOR_TYPE", "v6e-1"),
     "accelerator_count": count,
     "runtime_version": os.environ.get("TPU_RUNTIME_VERSION"),
     "framework": "vllm",
@@ -149,8 +149,8 @@ EOF
     ;;
   *)
     echo "Usage: $0 [provision-cmd|serve-cmd|bench-cmd|env|bench]" >&2
-    echo "  provision-cmd  Print gcloud v5e queued-resource commands"
-    echo "  serve-cmd      Print vLLM TPU serve commands (Qwen3-4B, v5e)"
+    echo "  provision-cmd  Print gcloud v6e queued-resource commands"
+    echo "  serve-cmd      Print vLLM TPU serve commands (Qwen3-4B, v6e)"
     echo "  bench-cmd      Print vllm bench serve command from benchmark_config.yaml"
     echo "  bench          Run benchmark inside running container ${CONTAINER_NAME}"
     exit 1

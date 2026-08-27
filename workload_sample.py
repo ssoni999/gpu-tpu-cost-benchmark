@@ -13,7 +13,7 @@ import aiohttp
 # =====================================================================
 
 PEAK_TFLOPS_DEFAULTS = {
-    "TPU v5e": 197.0,  # Peak BF16/INT8 TFLOPS per TPU v5e chip
+    "TPU v6e": 918.0,  # Peak BF16 TFLOPS per TPU v6e (Trillium) chip
     "GPU (T4)": 70.0,   # Peak FP16 TFLOPS for Nvidia T4
     "GPU (Generic)": 100.0,
     "CPU / Unknown": 10.0,
@@ -33,13 +33,13 @@ def detect_infrastructure(target_url="http://localhost:8000/v1/chat/completions"
                 if "vllm:gpu_cache_usage_perc" in content:
                     return "GPU (T4)"
                 elif "vllm:kv_cache_usage_perc" in content:
-                    return "TPU v5e"
+                    return "TPU v6e"
     except Exception:
         pass
 
     # Fall back to local device checks if metrics endpoint fails
     if os.path.exists("/dev/accel0") or "TPU_NAME" in os.environ:
-        return "TPU v5e"
+        return "TPU v6e"
     elif os.path.exists("/dev/nvidia0") or "CUDA_VISIBLE_DEVICES" in os.environ:
         return "GPU (T4)"
 
@@ -543,7 +543,7 @@ async def run_benchmark(args):
 
     results_dir = "workload_run_metrics"
     os.makedirs(results_dir, exist_ok=True)
-    # Sanitize infrastructure name for filename safety (e.g., "TPU v5e" -> "TPUv5e")
+    # Sanitize infrastructure name for filename safety (e.g., "TPU v6e" -> "TPUv6e")
     safe_infra = infra_type.replace(" ", "").replace("(", "").replace(")", "")
     
     # Order: infra, concurrency, temperature, top_p, top_k, num_requests

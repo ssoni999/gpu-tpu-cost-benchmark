@@ -15,7 +15,7 @@ spec:
         app: tiny-model-server
     spec:
       nodeSelector:
-        cloud.google.com/gke-tpu-accelerator: tpu-v5-lite-podslice
+        cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
         cloud.google.com/gke-tpu-topology: 1x1
       tolerations:
       - key: cloud.google.com/gke-tpu-accelerator

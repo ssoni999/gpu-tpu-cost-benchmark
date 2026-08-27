@@ -77,9 +77,9 @@ make compare
 | Parameter | GPU | TPU |
 |-----------|-----|-----|
 | Docker image | `vllm/vllm-openai:latest` | `vllm/vllm-tpu:latest` |
-| Node selector | `nvidia-t4` | `tpu-v5-lite-podslice` + topology `1x1` |
+| Node selector | `nvidia-t4` | `tpu-v6e-slice` + topology `1x1` |
 | Resource | `nvidia.com/gpu: 1` | `google.com/tpu: 1` |
-| Runtime version | — | `v2-alpha-tpuv5-lite` |
+| Runtime version | — | `v2-alpha-tpuv6e` |
 | K8s service | `tiny-model-gpu-service` | `tiny-model-service` |
 | Memory util | `0.95` | `0.98` |
 

@@ -1,6 +1,6 @@
 # GPU vs TPU Cost Benchmark
 
-Measured **Qwen/Qwen3-4B** inference economics on **G4 (vLLM)** vs **TPU v5e (vLLM TPU)**. Every headline number comes from a real `vllm bench serve` run — not placeholders.
+Measured **Qwen/Qwen3-4B** inference economics on **G4 (vLLM)** vs **TPU v6e (vLLM TPU)**. Every headline number comes from a real `vllm bench serve` run — not placeholders.
 
 Recipe repos (`gpu-recipes`, `tpu-recipes`) stay **adjacent and read-only** for infra patterns. This repo owns the **benchmark contract**, parsing, and comparison.
 
@@ -10,9 +10,9 @@ Recipe repos (`gpu-recipes`, `tpu-recipes`) stay **adjacent and read-only** for 
 configs/benchmark_config.yaml   # Workload contract + gpu/tpu serving & infra
 configs/gpu.env.example         # Copy → gpu.env (pricing + GCP IDs)
 configs/gcs.env.example         # Copy → gcs.env (GCS bucket for results)
-configs/tpu.env.example         # Copy → tpu.env (v5e + pricing)
+configs/tpu.env.example         # Copy → tpu.env (v6e + pricing)
 scripts/run_gpu.sh              # Run on G4 GCE VM
-scripts/run_tpu.sh              # Run on TPU v5e VM
+scripts/run_tpu.sh              # Run on TPU v6e VM
 scripts/normalize_results.py    # Raw bench text → normalized JSON
 scripts/calculate_cost.py       # Normalized → cost metrics
 scripts/compare.py              # GPU + TPU → comparison.json
@@ -37,15 +37,15 @@ From `configs/benchmark_config.yaml` (identical on both platforms):
 
 Recipe defaults (e.g. TPU guide’s 1000 prompts / 1800 input) are **not** used.
 
-## TPU v5e note
+## TPU v6e note
 
-Official `tpu-recipes` Qwen3 guide targets **v6e**. This project pins **v5e**:
+This project targets **v6e (Trillium)**, matching the official `tpu-recipes` Qwen3 guide:
 
-- Accelerator: `v5litepod-1` (1 chip for Qwen3-4B)
-- Runtime: `v2-alpha-tpuv5-lite`
+- Accelerator: `v6e-1` (1 chip for Qwen3-4B)
+- Runtime: `v2-alpha-tpuv6e`
 - Image: `vllm/vllm-tpu:latest`
 
-See [vLLM TPU setup](https://docs.vllm.ai/projects/tpu/en/latest/getting_started/tpu_setup/) for v5e provisioning.
+See [vLLM TPU setup](https://docs.vllm.ai/projects/tpu/en/latest/getting_started/tpu_setup/) for v6e provisioning.
 
 ## Quick start (Option A — trace + replay)
 
@@ -83,11 +83,11 @@ bash scripts/run_gpu.sh serve-cmd            # print docker serve command
 bash scripts/run_gpu.sh bench                # after server is up on :8000
 ```
 
-### 3. TPU path (v5e)
+### 3. TPU path (v6e)
 
 ```bash
 cp configs/tpu.env.example configs/tpu.env    # edit PROJECT_ID, ZONE, rates
-bash scripts/run_tpu.sh provision-cmd        # gcloud queued-resource (v5litepod-1)
+bash scripts/run_tpu.sh provision-cmd        # gcloud queued-resource (v6e-1)
 bash scripts/run_tpu.sh serve-cmd            # vLLM TPU serve in container
 bash scripts/run_tpu.sh bench                # inside running container
 ```
@@ -112,13 +112,13 @@ cat comparison.json
 ## Related repos (adjacent, not submodules)
 
 - `../gpu-recipes` — G4 vLLM serving pattern
-- `../tpu-recipes` — Qwen3 vLLM guide (adapted here for v5e)
+- `../tpu-recipes` — Qwen3 vLLM guide (adapted here for v6e)
 - `../MeasurementLayer` — source for cost math ideas (not a runtime dependency)
 - `../production-stack` — archived; not used in this path
 
 ## Honest limits
 
-- Verify **G4** and **TPU v5e** quota before provisioning.
+- Verify **G4** and **TPU v6e** quota before provisioning.
 - Set real hourly rates in `gpu.env` / `tpu.env` before quoting dollars.
 - v1 uses trace replay (Option A) or `vllm bench serve` — not customer-exported traffic yet.
 - `make trace` without `SEED=` generates a **new** workload each time; reuse one trace for GPU+TPU in the same comparison.
