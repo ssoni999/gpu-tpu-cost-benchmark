@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tiny-model-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tiny-model-server
+  template:
+    metadata:
+      labels:
+        app: tiny-model-server
+    spec:
+      nodeSelector:
+        cloud.google.com/gke-tpu-accelerator: tpu-v6e-slice
+        cloud.google.com/gke-tpu-topology: 1x1
+      tolerations:
+      - key: cloud.google.com/gke-tpu-accelerator
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: vllm-tpu
+        image: vllm/vllm-tpu:latest
+        command:
+        - python3
+        - -m
+        - vllm.entrypoints.openai.api_server
+        args:
+        - --model=Qwen/Qwen2.5-0.5B-Instruct
+        - --max-model-len=4096
+        - --max-num-batched-tokens=4096
+        - --max-num-seqs=128
+        - --tensor-parallel-size=1
+        - --gpu-memory-utilization=0.98
+        - --port=8000
+        ports:
+        - containerPort: 8000
+        resources:
+          limits:
+            google.com/tpu: 1
+          requests:
+            google.com/tpu: 1
+        imagePullPolicy: IfNotPresent
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tiny-model-service
+spec:
+  type: ClusterIP
+  selector:
+    app: tiny-model-server
+  ports:
+  - port: 8000
+    targetPort: 8000
