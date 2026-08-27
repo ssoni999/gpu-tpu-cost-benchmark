@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run on a G4 GCE VM after cloning this repo and copying configs/gpu.env.
+# Run on an A3 (H100) GCE VM after cloning this repo and copying configs/gpu.env.
 # Uses benchmark_config.yaml for all vLLM bench parameters (not recipe defaults).
 set -euo pipefail
 
@@ -24,7 +24,7 @@ env = {
     "project_id": os.environ.get("PROJECT_ID"),
     "zone": os.environ.get("ZONE"),
     "vm_name": os.environ.get("VM_NAME"),
-    "accelerator": "G4",
+    "accelerator": "A3 (H100)",
     "accelerator_count": 1,
     "framework": "vllm",
     "docker_image": os.environ.get("GPU_DOCKER_IMAGE"),

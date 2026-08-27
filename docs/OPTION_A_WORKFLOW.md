@@ -42,7 +42,7 @@ make trace SEED=1234567890
 ```
 
 Outputs:
-- `workload/prompts.jsonl` — 100 requests, ~1024 input / 128 output tokens each
+- `workload/prompts.jsonl` — 100 requests, ~1024 input / 512 output tokens each (medium tier, the default)
 - `workload/trace_meta.json` — seed + params (written by `make trace`; keep locally for reproducibility)
 
 **Rule:** Use **one trace file** for both GPU and TPU in a single comparison. Regenerate only when you want a new evaluation session.

@@ -63,34 +63,34 @@ slo:
 
 gpu:
   platform: gpu
-  accelerator: nvidia-l4
+  accelerator: nvidia-h100-80gb
   accelerator_count: 1
-  machine_type: g2-standard-4
-  power_watts: 72
+  machine_type: a3-highgpu-1g
+  power_watts: 700
   framework: vllm
-  peak_tflops: 242
+  peak_tflops: 989
   node_pool:
-    name: gpu-l4-pool
+    name: gpu-h100-pool
     node_count: 1
-    machine_type: g2-standard-4
-    vcpu: 4
-    system_memory_gib: 16
-    accelerator_memory_gib: 24
-    power_watts: 72
-    interconnect: PCIe 4.0 x16
-    network_gbps: 32
+    machine_type: a3-highgpu-1g
+    vcpu: 26
+    system_memory_gib: 234
+    accelerator_memory_gib: 80
+    power_watts: 700
+    interconnect: NVLink 4 (900 GBps)
+    network_gbps: 200
   docker_image: vllm/vllm-openai:latest
-  recipe_ref: ../gpu-recipes/inference/g4/single-host-serving/vllm/README.md
+  recipe_ref: ../gpu-recipes/inference/a3-highgpu-1g/single-host-serving/vllm/README.md
   k8s:
     deployment_name: tiny-model-gpu-server
     service_name: tiny-model-gpu-service
     app_label: tiny-model-gpu-server
     container_name: vllm-gpu
     port: 8000
-    output_file: tiny-model-l4-gpu.yaml
+    output_file: tiny-model-h100-gpu.yaml
   infra:
     node_selector:
-      cloud.google.com/gke-accelerator: nvidia-l4
+      cloud.google.com/gke-accelerator: nvidia-h100-80gb
     tolerations:
       - key: nvidia.com/gpu
         operator: Exists
@@ -166,20 +166,20 @@ tpu:
 pricing:
   # Defaults for UI cost metrics when results/{platform}/run_01_environment.json is absent.
   # Override at runtime via gpu.env / tpu.env → environment.json.
-  gpu_accelerator_hourly_usd: 0.52
-  gpu_vm_hourly_usd: 0.19
+  gpu_accelerator_hourly_usd: 10.60
+  gpu_vm_hourly_usd: 0.46
   tpu_accelerator_hourly_usd: 2.70
   tpu_vm_hourly_usd: 0.0
-  gpu_tdp_watts: 72          # NVIDIA L4 chip TDP (approx)
+  gpu_tdp_watts: 700         # NVIDIA H100 SXM5 chip TDP (approx)
   tpu_tdp_watts: 300         # TPU v6e (Trillium) single chip (approx)
 
 # pricing:
-#   # Spot pricing defaults for NVIDIA L4 on GCP (us-central1)
-#   gpu_accelerator_hourly_usd: 0.22   # Spot hourly price for 1x NVIDIA L4 GPU chip
-#   gpu_vm_hourly_usd: 0.05            # Spot hourly price for base 4 vCPU / 16GB RAM compute
+#   # Spot pricing defaults for NVIDIA H100 on GCP (us-central1)
+#   gpu_accelerator_hourly_usd: 3.19   # Spot hourly price for 1x NVIDIA H100 80GB chip (approx.)
+#   gpu_vm_hourly_usd: 0.14            # Spot hourly price for a3-highgpu-1g host vCPU/RAM (approx.)
 #   tpu_accelerator_hourly_usd: 0.81   # Spot hourly price for 1x TPU v6e chip (approx.)
 #   tpu_vm_hourly_usd: 0.0
-#   gpu_tdp_watts: 72                  # NVIDIA L4 chip TDP (72W)
+#   gpu_tdp_watts: 700                 # NVIDIA H100 SXM5 chip TDP (approx)
 #   tpu_tdp_watts: 300                 # TPU v6e (Trillium) single chip (approx)
 storage:
   gcs:

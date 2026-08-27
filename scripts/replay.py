@@ -40,14 +40,14 @@ from dashboard_client import LiveDashboard
 
 PEAK_TFLOPS_DEFAULTS: dict[str, float] = {
     "TPU v6e": 918.0,
-    "GPU (L4)": 242.0,
+    "GPU (H100)": 989.0,
     "GPU (T4)": 65.0,
     "Generic": 100.0,
 }
 
 PLATFORM_INFRA: dict[str, tuple[str, float]] = {
     "tpu": ("TPU v6e", PEAK_TFLOPS_DEFAULTS["TPU v6e"]),
-    "gpu": ("GPU (L4)", PEAK_TFLOPS_DEFAULTS["GPU (L4)"]),
+    "gpu": ("GPU (H100)", PEAK_TFLOPS_DEFAULTS["GPU (H100)"]),
 }
 
 
@@ -56,7 +56,7 @@ def detect_infrastructure() -> tuple[str, float]:
     if os.path.exists("/dev/accel0") or "TPU_NAME" in os.environ:
         return "TPU v6e", PEAK_TFLOPS_DEFAULTS["TPU v6e"]
     if os.path.exists("/dev/nvidia0") or "CUDA_VISIBLE_DEVICES" in os.environ:
-        return "GPU (L4)", PEAK_TFLOPS_DEFAULTS["GPU (L4)"]
+        return "GPU (H100)", PEAK_TFLOPS_DEFAULTS["GPU (H100)"]
     return "Generic", PEAK_TFLOPS_DEFAULTS["Generic"]
 
 

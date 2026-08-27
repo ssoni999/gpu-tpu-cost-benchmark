@@ -1,6 +1,6 @@
 # GPU vs TPU Cost Benchmark
 
-Measured **Qwen/Qwen3-4B** inference economics on **G4 (vLLM)** vs **TPU v6e (vLLM TPU)**. Every headline number comes from a real `vllm bench serve` run — not placeholders.
+Measured **Qwen/Qwen3-4B** inference economics on **A3 H100 (vLLM)** vs **TPU v6e (vLLM TPU)**. Every headline number comes from a real `vllm bench serve` run — not placeholders.
 
 Recipe repos (`gpu-recipes`, `tpu-recipes`) stay **adjacent and read-only** for infra patterns. This repo owns the **benchmark contract**, parsing, and comparison.
 
@@ -11,7 +11,7 @@ configs/benchmark_config.yaml   # Workload contract + gpu/tpu serving & infra
 configs/gpu.env.example         # Copy → gpu.env (pricing + GCP IDs)
 configs/gcs.env.example         # Copy → gcs.env (GCS bucket for results)
 configs/tpu.env.example         # Copy → tpu.env (v6e + pricing)
-scripts/run_gpu.sh              # Run on G4 GCE VM
+scripts/run_gpu.sh              # Run on A3 (H100) GCE VM
 scripts/run_tpu.sh              # Run on TPU v6e VM
 scripts/normalize_results.py    # Raw bench text → normalized JSON
 scripts/calculate_cost.py       # Normalized → cost metrics
@@ -75,7 +75,7 @@ pip install -r requirements.txt
 make bench-cmd    # verify vllm bench flags from config
 ```
 
-### 2. GPU path (G4 GCE)
+### 2. GPU path (A3 H100 GCE)
 
 ```bash
 cp configs/gpu.env.example configs/gpu.env   # edit PROJECT_ID, ZONE, rates
@@ -111,14 +111,14 @@ cat comparison.json
 
 ## Related repos (adjacent, not submodules)
 
-- `../gpu-recipes` — G4 vLLM serving pattern
+- `../gpu-recipes` — A3 (H100) vLLM serving pattern
 - `../tpu-recipes` — Qwen3 vLLM guide (adapted here for v6e)
 - `../MeasurementLayer` — source for cost math ideas (not a runtime dependency)
 - `../production-stack` — archived; not used in this path
 
 ## Honest limits
 
-- Verify **G4** and **TPU v6e** quota before provisioning.
+- Verify **A3 (H100)** and **TPU v6e** quota before provisioning.
 - Set real hourly rates in `gpu.env` / `tpu.env` before quoting dollars.
 - v1 uses trace replay (Option A) or `vllm bench serve` — not customer-exported traffic yet.
 - `make trace` without `SEED=` generates a **new** workload each time; reuse one trace for GPU+TPU in the same comparison.
